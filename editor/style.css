@@ -889,3 +889,82 @@ body.ai-busy .workspace, body.ai-busy .topbar { pointer-events: none; user-selec
 
 /* Название формулы — многострочное поле */
 .formula-name { min-height: 52px; resize: vertical; line-height: 1.45; }
+
+/* ===== Ссылка на опубликованное задание (строка названия + отдельная строка) ===== */
+.published-link-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+}
+.published-link-label { color: var(--fg-muted); white-space: nowrap; }
+.published-link-url {
+    color: var(--accent, #6ea8fe);
+    text-decoration: underline;
+    word-break: break-all;
+}
+.published-link-copy { color: var(--fg-muted); font-size: 0.72rem; }
+.published-link-inline {
+    font-size: 0.78rem;
+    color: var(--accent, #6ea8fe);
+    text-decoration: none;
+    padding: 2px 8px;
+    border: 1px solid var(--border, rgba(255,255,255,0.12));
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.published-link-inline:hover { text-decoration: underline; }
+
+/* ===== Модальное окно предпросмотра «как у студента» (.sp-*) ===== */
+.sp-modal { max-height: 90vh; overflow-y: auto; }
+.sp-body { padding-bottom: 0.5rem; }
+.sp-formula-name { font-size: 1.05rem; font-weight: 700; }
+.sp-symbols {
+    background: var(--bg);
+    border: 1px solid var(--border, rgba(255,255,255,0.1));
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.sp-symbols-title {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin-bottom: 0.25rem;
+}
+.sp-symbol { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.sp-symbol-char { min-width: 2.2rem; }
+.sp-symbol-dash { color: var(--fg-muted); }
+.sp-answer-zone .sp-drop,
+.sp-pool-zone .fragments-preview { min-height: 64px; }
+.sp-drop {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    border: 2px dashed var(--border, rgba(255,255,255,0.18));
+    border-radius: 10px;
+    padding: 0.6rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.sp-drop.drag-over { border-color: var(--accent, #6ea8fe); }
+.sp-drop.has-items { border-style: solid; }
+.sp-drop.sp-correct { border-color: var(--success, #10b981); }
+.sp-drop.sp-incorrect { border-color: var(--danger, #ef4444); }
+.sp-drop .hint-text { color: var(--fg-muted); font-size: 0.85rem; }
+.sp-feedback {
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.85rem;
+}
+.sp-feedback.ok { background: rgba(16, 185, 129, 0.12); color: var(--success, #10b981); }
+.sp-feedback.bad { background: rgba(239, 68, 68, 0.12); color: var(--danger, #ef4444); }
+.frag-chip.fragment.sp-ok { outline: 2px solid var(--success, #10b981); }
+.frag-chip.fragment.sp-bad { outline: 2px solid var(--danger, #ef4444); }
+.frag-chip.fragment.placed { cursor: pointer; }
+.frag-chip.fragment.dragging { opacity: 0.5; }

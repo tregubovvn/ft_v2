@@ -20,6 +20,9 @@ let wrongCount = 0;
 let results = [];
 let currentFragments = [];
 let placedFragments = [];
+// true, если результат текущего задания уже записан в results
+// (кнопками «Проверить»/«Дальше»/«Завершить») — защита от двойного учёта.
+let answerRecorded = false;
 // lastName — ФИО студента, firstName — группа (исторически сложившиеся id полей)
 let studentData = { lastName: '', group: '' };
 let resultFormUrl = null;
@@ -132,6 +135,7 @@ function renderLatexDisplay(latex, element) {
 // ============ TIMER ============
 function startTimer() {
     testStartTime = Date.now();
+    totalTestTime = 0;
     timerInterval = setInterval(() => {
         elements.timerDisplay.textContent = formatTime(Date.now() - testStartTime);
     }, 1000);
@@ -142,7 +146,8 @@ function stopTimer() {
         clearInterval(timerInterval);
         timerInterval = null;
     }
-    totalTestTime = Date.now() - testStartTime;
+    // Время сдачи корректно только если таймер действительно запускался.
+    if (testStartTime > 0) totalTestTime = Date.now() - testStartTime;
     return totalTestTime;
 }
 
@@ -264,6 +269,7 @@ function loadCurrentFormula() {
     elements.progressFill.style.width = `${(currentFormulaIndex / formulas.length) * 100}%`;
 
     currentFragments = parseLatexToFragments(formula.latex);
+    resetFormulaState();
     renderSymbols(formula.symbols);
     renderFragments();
     resetDropZone();
@@ -302,9 +308,12 @@ function renderFragments() {
     });
 }
 
+// Обновляет состояние кнопок «Проверить»/«Дальше»: «Проверить» доступна,
+// когда собран полный ответ; «Дальше» — только после правильной проверки.
 function updateCheckButton() {
-    elements.checkBtn.disabled = placedFragments.length !== currentFragments.length;
-    elements.checkBtnNext.disabled = false;
+    const complete = placedFragments.length === currentFragments.length;
+    elements.checkBtn.disabled = !complete;
+    elements.checkBtnNext.disabled = !(complete && answerRecorded && isAnswerCorrect());
 }
 
 function updateStartButton() {
@@ -407,18 +416,21 @@ function showFeedback(correct) {
     });
 }
 
-// Live feedback without recording the result (button «Проверить»).
+// Проверка ответа (кнопка «Проверить»): показывает обратную связь,
+// фиксирует результат текущего задания (один раз) и разблокирует
+// «Дальше», если ответ правильный.
 function checkAnswer() {
     const correct = isAnswerCorrect();
+    recordCurrentResult();
     showFeedback(correct);
-    elements.checkBtnNext.disabled = !correct;
-    elements.checkBtn.disabled = true;
-    if (!correct) wrongCount++;
+    updateCheckButton();
 }
 
-// Record the result and advance to the next formula (button «Дальше»).
-function checkAnswerNext() {
+// Запись результата текущего задания в статистику (без повторов).
+function recordCurrentResult() {
+    if (answerRecorded) return;
     const formula = formulas[currentFormulaIndex];
+    if (!formula) return;
     const correct = isAnswerCorrect();
     results.push({
         name: formula.name,
@@ -429,31 +441,33 @@ function checkAnswerNext() {
     });
     if (correct) correctCount++;
     else wrongCount++;
-    showFeedback(correct);
+    answerRecorded = true;
+}
+
+// Reset per-formula bookkeeping (called from loadCurrentFormula).
+function resetFormulaState() {
+    answerRecorded = false;
+    elements.checkBtnNext.disabled = true;
+    elements.checkBtn.disabled = false;
+}
+
+// Advance to the next formula (button «Дальше», доступна только после
+// правильной проверки — поэтому ответ фиксируется как верный).
+function checkAnswerNext() {
+    recordCurrentResult();
     setTimeout(() => {
         currentFormulaIndex++;
         loadCurrentFormula();
     }, NEXT_FORMULA_DELAY_MS);
 }
 
-// Кнопка «Завершить»: зафиксировать текущий ответ и сразу перейти
-// на последний экран (результат теста), пропустив остальные формулы.
+// Кнопка «Завершить»: зафиксировать текущий ответ (если он ещё не
+// записан кнопкой «Дальше») и сразу перейти на последний экран —
+// результат теста, пропустив оставшиеся формулы.
 function finishTest() {
-    const formula = formulas[currentFormulaIndex];
-    if (formula && placedFragments.length > 0) {
-        const correct = isAnswerCorrect();
-        results.push({
-            name: formula.name,
-            latex: formula.latex,
-            correct,
-            userAnswer: placedFragments.join(' '),
-            correctAnswer: currentFragments.join(' '),
-        });
-        if (correct) correctCount++;
-        else wrongCount++;
-    }
-    currentFormulaIndex = formulas.length; // следующий переход экрана → showResults()
-    loadCurrentFormula();
+    recordCurrentResult();
+    currentFormulaIndex = formulas.length;
+    loadCurrentFormula(); // index >= length → showResults()
 }
 
 // ============ RESULTS ============
@@ -482,7 +496,7 @@ function buildResultsDetailsHtml(resultsList) {
 function buildSubmissionSummaryHtml() {
     const submissionDate = new Date();
     const rows = [
-        ['ФИО', `${studentData.lastName} ${studentData.group}`.trim()],
+        ['ФИО', studentData.lastName.trim()],
         ['Группа', studentData.group],
         ['Тема теста', quizTitle || '(не указана в файле)'],
         ['Дата и время сдачи', submissionDate.toLocaleString('ru-RU')],
@@ -494,17 +508,18 @@ function buildSubmissionSummaryHtml() {
 }
 
 function showResults() {
+    elements.resultStudentName.textContent = `${studentData.lastName} ${studentData.group}`.trim();
+    // Сначала фиксируем время сдачи, затем строим сводку (в ней используется totalTestTime).
     stopTimer();
+    if (elements.submissionSummary) {
+        elements.submissionSummary.innerHTML = buildSubmissionSummaryHtml();
+    }
     const total = formulas.length;
     const percentage = total > 0
         ? Math.max(0, Math.round((correctCount / total - WRONG_ANSWER_PENALTY * wrongCount) * 100))
         : 0;
     const mark = computeScore(percentage);
 
-    elements.resultStudentName.textContent = `${studentData.lastName} ${studentData.group}`;
-    if (elements.submissionSummary) {
-        elements.submissionSummary.innerHTML = buildSubmissionSummaryHtml();
-    }
     elements.resultTime.textContent = formatTime(totalTestTime);
     elements.totalFormulas.textContent = total;
     elements.correctAnswers.textContent = correctCount;
