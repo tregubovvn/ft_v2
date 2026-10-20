@@ -1,10 +1,10 @@
 # Formula Builder
 
-https://tregubovvn.github.io/ft/editor/index.html 
+https://tregubovvn.github.io/ft_v2/editor/index.html 
 
-https://tregubovvn.github.io/ft/index.html?file=https://tregubovvn.github.io/ft/op/t2.xml 
+https://tregubovvn.github.io/ft_v2/index.html?file=https://tregubovvn.github.io/ft/op/t2.xml 
 
-https://tregubovvn.github.io/ft/index.html?file=https://tregubovvn.github.io/ft/excel/test1.xml 
+https://tregubovvn.github.io/ft_v2/index.html?file=https://tregubovvn.github.io/ft/excel/test1.xml 
 
 ## Промпт для создания заданий
 https://gist.github.com/tregubovvn/e32e6561ac50b1866e5cb9de2a238f68 
