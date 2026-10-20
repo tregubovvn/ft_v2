@@ -258,8 +258,8 @@ function bindEvents() {
     });
     on('prevBtn', 'click', prevFormula);
     on('nextBtn', 'click', nextFormula);
+    on('btnFinishNav', 'click', goToLastFormula);
     on('btnAddFormula', 'click', addFormula);
-    on('btnDuplicateFormula', 'click', duplicateFormula);
     on('btnDeleteFormula', 'click', deleteCurrentFormula);
     on('btnAddSymbol', 'click', addSymbol);
 
@@ -1015,13 +1015,9 @@ function addFormula() {
     els.formulaName.focus();
 }
 
-function duplicateFormula() {
-    const copy = JSON.parse(JSON.stringify(currentFormula()));
-    state.formData.formulas.splice(state.currentFormulaIndex + 1, 0, copy);
-    state.currentFormulaIndex++;
-    renderFormula();
-    updateXmlOutput();
-    showToast('Формула продублирована');
+// «Завершить» рядом с «Следующий →»: переход на последний экран (последняя формула).
+function goToLastFormula() {
+    goToFormula(state.formData.formulas.length - 1);
 }
 
 function deleteCurrentFormula() {
@@ -1523,11 +1519,14 @@ function buildTaskUrl() {
     return state.gitverseUrl || '';
 }
 
-// Показать ссылку на задание после публикации: статус + toast + копирование
+// Показать ссылку на задание после публикации: статус + toast + копирование.
+// Ссылку также выводим в строке названия (текстом и кликабельной ссылкой),
+// чтобы автор мог открыть/проверить опубликованное задание сразу.
 function showPublishedLink(title, link) {
     setStatus(`${title}. Ссылка скопирована в буфер обмена`);
     showToast(`${title}: ${link}`, false);
     if (link && navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
+    setPublishedLinkDisplay(link);
 }
 
 // В строке названия показываем контейнер задания (копировать ссылку / предупреждение),
@@ -1535,7 +1534,34 @@ function showPublishedLink(title, link) {
 function updateGistLinkDisplay() {
     const link = buildTaskUrl();
     els.gistLinkContainer.classList.toggle('hidden', !link);
+    setPublishedLinkDisplay(link);
     updatePublishWarning();
+}
+
+const PUBLISHED_LINK_ID = 'publishedTestLink';
+
+function setPublishedLinkDisplay(link) {
+    let row = document.getElementById(PUBLISHED_LINK_ID);
+    if (!row) {
+        if (!link) return;
+        row = document.createElement('div');
+        row.id = PUBLISHED_LINK_ID;
+        row.className = 'published-link-row';
+        row.innerHTML = '<span class="published-link-label">Опубликовано:</span>'
+            + '<a class="published-link-url" target="_blank" rel="noopener"></a>'
+            + '<span class="published-link-copy"></span>';
+        const topicRow = els.gistLinkContainer.parentElement;
+        topicRow.insertAdjacentElement('afterend', row);
+    }
+    if (link) {
+        row.querySelector('.published-link-url').textContent = link;
+        row.querySelector('.published-link-url').href = link;
+        row.querySelector('.published-link-copy').textContent =
+            state.publishedDirty ? '⚠ есть изменения после публикации' : 'ссылка скопирована в буфер';
+        row.classList.remove('hidden');
+    } else {
+        row.classList.add('hidden');
+    }
 }
 
 // Копирование ссылки на задание (кнопка рядом с предупреждением о переопубликации)
@@ -1601,6 +1627,13 @@ async function saveToGist(opts = {}) {
 
         const fd = data.files[state.gistFilename];
         if (fd && fd.raw_url) state.rawUrl = fd.raw_url;
+        // Успешная запись в GIST = фактическая публикация: сбрасываем флаг изменений.
+        // (GITverse обновляется отдельной кнопкой — если он привязан и ещё не
+        // переопубликован, предупреждение остаётся.)
+        if (!opts.silent) {
+            state.publishedDirty = !state.gitversePublished;
+            state.dirty = false;
+        }
         setStatus('Обновлено в GIST в ' + new Date().toLocaleTimeString());
         if (!opts.silent) showPublishedLink('Обновлено в GIST', buildTaskUrl());
         else updateGistLinkDisplay();
@@ -2020,6 +2053,9 @@ async function loadFromGist() {
             state.gistUrl = data.html_url || ('https://gist.github.com/' + id);
             state.gistFilename = fileName;
             state.rawUrl = file.raw_url || null;
+            // Загружаем задание ровно в том виде, в каком оно опубликовано:
+            // до следующих изменений переопубликация не требуется.
+            state.publishedDirty = false;
 
             // Название теста берём из описания GIST (если это не подпись по умолчанию)
             state.formData.name = data.description && data.description !== 'Formula Test'
