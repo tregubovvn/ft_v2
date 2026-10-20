@@ -84,9 +84,10 @@ const state = {
     gistUrl: null,
     rawUrl: null,
     gistFilename: GIST_FILENAME,
-    // Публикация на GITverse (аналог GitHub Gist): файл в репозитории пользователя.
+    // Публикация на GITverse (аналог GitHub Gist): обычный файл в репозитории пользователя.
     // gitverseOwner — логин владельца токена; gitverseRepo — имя репозитория;
     // gitverseBranch — ветка, в которой лежит файл; gitverseFileSha — SHA файла для PUT-обновления.
+    gitversePublished: false,
     gitverseOwner: null,
     gitverseRepo: GITVERSE_REPO_NAME,
     gitverseBranch: null,
@@ -128,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initResizer();
     bindEvents();
     loadPromptsFromGists();   // подтягиваем основные промпты из Gist
-    registerStudentAppShortcuts();  // Ctrl+Shift+P — открыть тест так, как его увидит студент
+    registerStudentPreviewShortcut();  // Ctrl+Shift+P — проверить решение так, как это будет у студента
 });
 
 // Отладочный доступ к состоянию и ключевым функциям из консоли браузера.
@@ -207,11 +208,15 @@ function bindEvents() {
     on('btnSpPrev', 'click', () => studentPreviewGo(-1));
     on('btnSpNext', 'click', () => studentPreviewGo(1));
     on('btnSpCheck', 'click', checkStudentPreviewAnswer);
+    bindStudentPreviewDropZone();
     els.studentPreviewModal.addEventListener('click', (e) => {
         if (e.target === els.studentPreviewModal) closeStudentPreview();
     });
 
     // Правая панель обзора формул
+    els.btnToggleReview = document.getElementById('btnToggleReview');
+    els.spFormulaName = document.getElementById('spFormulaName');
+    els.btnSpCheck = document.getElementById('btnSpCheck');
     els.btnToggleReview.addEventListener('click', toggleReviewPanel);
     on('btnReviewClose', 'click', hideReviewPanel);
 
@@ -1082,7 +1087,7 @@ function updateXmlOutput(opts = {}) {
 // (если задание уже публиковалось) + автосохранения на диск / в Gist.
 function markTaskChanged() {
     state.dirty = true;
-    if (state.gistId || state.gitverseId) state.publishedDirty = true;
+    if (state.gistId || state.gitversePublished) state.publishedDirty = true;
     updatePublishWarning();
     scheduleAutoSave();
     scheduleGistSave();
@@ -1093,7 +1098,7 @@ function markTaskChanged() {
 function updatePublishWarning() {
     const btn = els.btnRepublish;
     if (!btn) return;
-    const show = state.publishedDirty && !!(state.gistId || state.gitverseId);
+    const show = state.publishedDirty && !!(state.gistId || state.gitversePublished);
     btn.classList.toggle('hidden', !show);
     btn.title = show
         ? 'В задании есть изменения после публикации — опубликуйте повторно, иначе студенты увидят старую версию'
@@ -1108,8 +1113,8 @@ async function republishCurrent() {
     }
     if (!checkBeforePublish()) return;
     if (state.gistId) await saveToGist();
-    if (state.gitverseId) await saveToGitverseSnippet();
-    if (!state.gistId && !state.gitverseId) {
+    if (state.gitversePublished) await saveToGitverseFile();
+    if (!state.gistId && !state.gitversePublished) {
         showToast('Задание ещё нигде не опубликовано — выберите площадку в меню «🚀 Публикация»', true);
     }
 }
@@ -1488,11 +1493,11 @@ function publishToGist() {
     return createNewGist();
 }
 
-// Публикация на GITverse: если сниппет уже привязан — обновляем его, иначе создаём новый.
+// Публикация на GITverse: обычный файл formula_test.xml в репозитории пользователя
+// (НЕ сниппеты) — создаётся/обновляется напрямую по личному токену через REST API.
 function publishToGitverse() {
     if (!checkBeforePublish()) return;
-    if (state.gitverseId) return updateGitverseSnippet();
-    return createNewGitverseSnippet();
+    return saveToGitverseFile();
 }
 
 // Проверка готовности к публикации; при проблемах — открываем панель обзора.
@@ -1625,6 +1630,318 @@ function scheduleGistSave() {
         state.gistSaveTimeout = null;
         saveToGist({ silent: true });
     }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// ============================================================
+// Проверка решения «как у студента» (кнопка рядом с Предпросмотром KaTeX)
+// Полностью повторяет механику теста студента (js/app.js): перемешанный пул
+// фрагментов, клик/drag-n-drop в зону ответа, проверка порядка фрагментов.
+// ============================================================
+const SP_HINT_TEXT = 'Кликните по фрагментам снизу (или перетащите сюда), чтобы собрать формулу';
+
+function shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+// Ctrl+Shift+P — быстрый доступ к окну проверки (как у студента)
+function registerStudentPreviewShortcut() {
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'р' || e.key === 'R')) {
+            e.preventDefault();
+            openStudentPreview();
+        }
+    });
+}
+
+function openStudentPreview() {
+    if (!state.formData.formulas.length) {
+        return showToast('В задании ещё нет формул', true);
+    }
+    // Открываем текущую формулу редактора — автор проверяет именно её
+    state.studentPreview.index = Math.min(state.currentFormulaIndex, state.formData.formulas.length - 1);
+    els.studentPreviewModal.classList.add('show');
+    renderStudentPreview();
+}
+
+function closeStudentPreview() {
+    els.studentPreviewModal.classList.remove('show');
+}
+
+function studentPreviewGo(delta) {
+    const n = state.formData.formulas.length;
+    state.studentPreview.index = (state.studentPreview.index + delta + n) % n;
+    renderStudentPreview();
+}
+
+// Пересобрать окно: новый перемешанный пул (как при загрузке формулы у студента)
+function renderStudentPreview() {
+    const sp = state.studentPreview;
+    const f = state.formData.formulas[sp.index];
+    if (!f) return;
+
+    sp.pool = parseLatexToFragments(f.latex || '');
+    sp.placed = [];
+
+    els.spCounter.textContent = (sp.index + 1) + ' / ' + state.formData.formulas.length;
+    els.spFormulaName.textContent = f.name || '(без названия)';
+
+
+    // Обозначения — как подсказка студенту перед сборкой
+    const symbols = (f.symbols || []).filter(s => (s.char && s.char.trim()) || (s.name && s.name.trim()));
+    if (symbols.length) {
+        els.spSymbols.classList.remove('hidden');
+        els.spSymbols.innerHTML = '<div class="sp-symbols-title">Условные обозначения</div>' + symbols.map(s =>
+            '<div class="sp-symbol"><span class="sp-symbol-char">' + renderLatexInline(s.char)
+            + '</span><span class="sp-symbol-dash">—</span><span>' + escHtml(s.name) + '</span></div>').join('');
+    } else {
+        els.spSymbols.classList.add('hidden');
+        els.spSymbols.innerHTML = '';
+    }
+
+    els.spFeedback.classList.add('hidden');
+    els.spFeedback.innerHTML = '';
+
+    // Зона ответа — пустая, с подсказкой (как dropZone у студента)
+    els.spDropZone.innerHTML = '<p class="hint-text">' + SP_HINT_TEXT + '</p>';
+    els.spDropZone.classList.remove('has-items', 'sp-correct', 'sp-incorrect');
+
+    // Пул фрагментов в перемешанном порядке
+    els.spPool.innerHTML = '';
+    shuffleArray(sp.pool).forEach((frag, i) => {
+        const el = document.createElement('div');
+        el.className = 'frag-chip fragment';
+        el.draggable = true;
+        el.dataset.fragment = frag;
+        el.dataset.index = String(i);
+        el.innerHTML = renderLatexInline(frag);
+        el.addEventListener('click', spFragmentClick);
+        el.addEventListener('dragstart', spDragStart);
+        el.addEventListener('dragend', spDragEnd);
+        els.spPool.appendChild(el);
+    });
+    spUpdateCheckButton();
+}
+
+let spDragged = null;
+
+function spMoveToAnswer(fragment) {
+    const hint = els.spDropZone.querySelector('.hint-text');
+    if (hint) hint.remove();
+    els.spDropZone.appendChild(fragment);
+    fragment.classList.add('placed');
+    els.spDropZone.classList.add('has-items');
+    state.studentPreview.placed.push(fragment.dataset.fragment);
+}
+
+function spMoveBack(fragment) {
+    els.spPool.appendChild(fragment);
+    fragment.classList.remove('placed');
+    state.studentPreview.placed = state.studentPreview.placed.filter(x => x !== fragment.dataset.fragment);
+    if (!state.studentPreview.placed.length) {
+        els.spDropZone.innerHTML = '<p class="hint-text">' + SP_HINT_TEXT + '</p>';
+        els.spDropZone.classList.remove('has-items');
+    }
+    els.spDropZone.classList.remove('sp-correct', 'sp-incorrect');
+    els.spFeedback.classList.add('hidden');
+}
+
+function spFragmentClick(e) {
+    const fragment = e.target.closest('.fragment');
+    if (!fragment) return;
+    if (els.spDropZone.contains(fragment)) spMoveBack(fragment);
+    else spMoveToAnswer(fragment);
+    spUpdateCheckButton();
+}
+
+function spDragStart(e) {
+    spDragged = e.target.closest('.fragment');
+    if (spDragged) {
+        spDragged.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+    }
+}
+
+function spDragEnd() {
+    if (spDragged) spDragged.classList.remove('dragging');
+    spDragged = null;
+}
+
+function spUpdateCheckButton() {
+    const btn = document.getElementById('btnSpCheck');
+    if (btn) {
+        btn.disabled = state.studentPreview.placed.length !== state.studentPreview.pool.length;
+    }
+}
+
+function resetStudentPreviewAnswer() {
+    renderStudentPreview();
+}
+
+// Проверка: порядок фрагментов в зоне ответа должен совпадать с эталонным разбором LaTeX
+function checkStudentPreviewAnswer() {
+    const sp = state.studentPreview;
+    const correct = JSON.stringify(sp.pool) === JSON.stringify(sp.placed);
+    els.spDropZone.querySelectorAll('.fragment').forEach(f => {
+        f.classList.add(correct ? 'sp-ok' : 'sp-bad');
+    });
+    els.spDropZone.classList.add(correct ? 'sp-correct' : 'sp-incorrect');
+    els.spFeedback.classList.remove('hidden');
+    els.spFeedback.className = 'sp-feedback ' + (correct ? 'ok' : 'bad');
+    if (correct) {
+        els.spFeedback.innerHTML = '✔ Решение верное — студент соберёт эту формулу без ошибок.';
+    } else {
+        els.spFeedback.innerHTML = '✖ Порядок фрагментов неверный.<br>'
+            + 'Эталон: <code>' + escHtml(sp.pool.join(' ␣ ')) + '</code><br>'
+            + 'Ответ: <code>' + escHtml(sp.placed.join(' ␣ ')) + '</code>';
+    }
+    const btn = document.getElementById('btnSpCheck');
+    if (btn) btn.disabled = true;
+}
+
+// Слушатели drag-and-drop зоны ответа вешаются один раз (элементы статичны в HTML)
+function bindStudentPreviewDropZone() {
+    if (!els.spDropZone || els.spDropZone.dataset.bound) return;
+    els.spDropZone.dataset.bound = '1';
+    els.spDropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        els.spDropZone.classList.add('drag-over');
+    });
+    els.spDropZone.addEventListener('dragleave', () => {
+        els.spDropZone.classList.remove('drag-over');
+    });
+    els.spDropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        els.spDropZone.classList.remove('drag-over');
+        if (spDragged && !els.spDropZone.contains(spDragged)) {
+            spMoveToAnswer(spDragged);
+            spUpdateCheckButton();
+        }
+    });
+}
+
+// ============================================================
+// Публикация на GITverse — обычный файл в репозитории пользователя
+// (по личному токену, БЕЗ сниппетов). API GITverse совместим с GitHub REST v1:
+//   GET  /user                          — логин владельца токена
+//   GET  /repos/{owner}/{repo}          — существует ли репозиторий
+//   POST /user/repos                    — создать репозиторий (при первой публикации)
+//   GET  /repos/{owner}/{repo}/contents/{path} — SHA файла для PUT-обновления
+//   PUT  /repos/{owner}/{repo}/contents/{path} — создать/обновить файл (base64)
+// Студент открывает тест по raw-ссылке: https://gitverse.ru/{owner}/{repo}/raw/{branch}/{path}
+// ============================================================
+async function gitverseRequest(token, path, options = {}) {
+    const res = await fetch(GITVERSE_API_BASE + path, {
+        ...options,
+        headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json',
+            ...(options.headers || {}),
+        },
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* пустое/не-JSON тело */ }
+    if (!res.ok) {
+        const msg = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+        throw new Error(msg);
+    }
+    return data;
+}
+
+// Логин владельца токена (кэшируется в state между публикациями)
+async function getGitverseUser(token) {
+    if (state.gitverseOwner) return state.gitverseOwner;
+    const me = await gitverseRequest(token, '/user');
+    state.gitverseOwner = (me && me.login) || null;
+    if (!state.gitverseOwner) throw new Error('не удалось определить логин пользователя GITverse');
+    return state.gitverseOwner;
+}
+
+// Убедиться, что репозиторий formula-tests существует; создать при необходимости.
+async function ensureGitverseRepo(token, owner) {
+    try {
+        await gitverseRequest(token, `/repos/${owner}/${GITVERSE_REPO_NAME}`);
+        return; // репозиторий уже есть
+    } catch (e) {
+        if (!/not found|404/i.test(String(e.message))) throw e;
+    }
+    await gitverseRequest(token, '/user/repos', {
+        method: 'POST',
+        body: JSON.stringify({
+            name: GITVERSE_REPO_NAME,
+            description: 'Тесты сборки формул (Formula Builder)',
+            private: false,          // публичный — иначе студент не откроет raw-ссылку
+            default_branch: GITVERSE_DEFAULT_BRANCH,
+        }),
+    });
+}
+
+// Найти существующий файл и его SHA (перебираем ветки master/main).
+// Возвращает { branch, sha } или null, если файла ещё нет.
+async function getGitverseFileSha(token, owner, repo) {
+    for (const branch of GITVERSE_BRANCHES) {
+        try {
+            const info = await gitverseRequest(
+                token, `/repos/${owner}/${repo}/contents/${GITVERSE_FILE_PATH}?ref=${branch}`);
+            if (info && info.sha) return { branch, sha: info.sha };
+        } catch (e) {
+            if (!/not found|404/i.test(String(e.message))) throw e;
+        }
+    }
+    return null;
+}
+
+// Записать файл в репозиторий: PUT с base64-содержимым (с sha — обновление, без — создание).
+async function updateGitverseFile(token, owner, repo, branch, content, sha) {
+    const body = {
+        message: 'Обновление теста: ' + (state.formData.name || 'Formula Test'),
+        content: btoa(unescape(encodeURIComponent(content))),
+        branch,
+    };
+    if (sha) body.sha = sha;
+    return gitverseRequest(token, `/repos/${owner}/${repo}/contents/${GITVERSE_FILE_PATH}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+    });
+}
+
+// Основная функция публикации: создаёт/обновляет файл formula_test.xml
+// в репозитории пользователя на GITverse. Повторный вызов — это и «Публиковать заново».
+async function saveToGitverseFile() {
+    const token = getGitverseToken();
+    if (!token) return showToast('Укажите GITverse Token (⚙ Настройки)', true);
+
+    try {
+        setStatus('Публикация на GITverse…');
+        const owner = await getGitverseUser(token);
+        await ensureGitverseRepo(token, owner);
+        const existing = await getGitverseFileSha(token, owner, GITVERSE_REPO_NAME);
+        const branch = existing ? existing.branch : GITVERSE_DEFAULT_BRANCH;
+        const content = els.xmlEditor.value || generateXml();
+
+        await updateGitverseFile(token, owner, GITVERSE_REPO_NAME, branch, content,
+            existing ? existing.sha : null);
+
+        state.gitversePublished = true;
+        state.gitverseOwner = owner;
+        state.gitverseRepo = GITVERSE_REPO_NAME;
+        state.gitverseBranch = branch;
+        state.gitverseFileSha = null; // SHA изменился после PUT — при следующем обновлении перечитаем
+        state.gitverseRawUrl = `https://gitverse.ru/${owner}/${GITVERSE_REPO_NAME}/raw/${branch}/${GITVERSE_FILE_PATH}`;
+        state.gitverseUrl = `https://gitverse.ru/${owner}/${GITVERSE_REPO_NAME}/src/${branch}/${GITVERSE_FILE_PATH}`;
+        state.publishedDirty = false;
+        state.dirty = false;
+
+        updateGistLinkDisplay();
+        showPublishedLink('Опубликовано на GITverse', buildTaskUrl());
+    } catch (e) {
+        setStatus('Ошибка публикации на GITverse: ' + e.message);
+        showToast('GITverse: ' + e.message, true);
+    }
 }
 
 function openExternal(url) { window.open(url, '_blank', 'noopener'); }
