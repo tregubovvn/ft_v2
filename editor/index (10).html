@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Formula Test Редактор</title>
+    <!-- KaTeX для предпросмотра формул и фрагментов -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- ===== Верхняя панель: заголовок + все действия сгруппированы ===== -->
+    <header class="topbar">
+        <div class="brand">
+            <h1>Formula Test Редактор</h1>
+        </div>
+
+        <nav class="toolbar" aria-label="Панель действий">
+            <div class="btn-group" role="group" aria-label="Файл">
+                <button type="button" class="btn" id="btnNewQuiz" title="Очистить редактор и начать новое задание из шаблона">🆕 Новый</button>
+                <button type="button" class="btn" id="btnLoadGist" title="Загрузить задание из GitHub Gist">☁️ Загрузить из Gist</button>
+                <button type="button" class="btn" id="btnLoadDiskFile" title="Открыть XML-файл с диска; он станет файлом, в который сохраняются изменения">📂 Загрузить из файла</button>
+                <button type="button" class="btn btn-primary" id="btnSaveFile" title="Сохранить XML в файл на диск компьютера">💾 Сохранить в файл</button>
+                <div class="autosave-col">
+                    <label class="switch-inline" title="Автосохранение на диск при изменениях в задании (только в ранее выбранный файл)">
+                        <input type="checkbox" id="autoSaveToggle">
+                        <span class="switch-caption">Автосохранение</span>
+                    </label>
+                    <span class="autosave-time hidden" id="lastSaveTimeLabel" title="Время последнего сохранения файла на диск"></span>
+                </div>
+            </div>
+
+            <div class="btn-group" role="group" aria-label="Публикация">
+                <!-- Проверка перед публикацией: у всех формул должны быть название и корректный LaTeX -->
+                <span class="publish-check-note hidden" id="publishCheckNote" title="Не все формулы готовы к тесту — исправьте, иначе публикация заблокирована">⚠ формулы не готовы</span>
+                <button type="button" class="btn btn-publish" id="btnPublish" title="Опубликовать задание на GitHub Gist (проверка: все формулы готовы к тесту)">🚀 Публикация ▾</button>
+                <div class="publish-menu hidden" id="publishMenu">
+                    <button type="button" class="publish-item" id="btnPublishGist">
+                        <strong>GitHub Gist</strong>
+                        <span>Новый приватный Gist (или обновление текущего)</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="btn-group" role="group" aria-label="Обзор">
+                <button type="button" class="btn" id="btnToggleReview" title="Быстрый просмотр всех формул с проверкой готовности (правая панель)">👁 Обзор</button>
+            </div>
+
+            <div class="btn-group" role="group" aria-label="Настройки">
+                <button type="button" class="btn btn-settings" id="btnSettings" title="Токены сервисов">⚙ Настройки</button>
+            </div>
+        </nav>
+    </header>
+
+    <!-- ===== Основная область: XML-панель слева + редактор формул справа ===== -->
+    <main class="workspace">
+        <aside class="xml-panel" id="xmlPanel">
+            <div class="xml-header">
+                <span>XML</span>
+                <div class="flex-gap">
+                    <button type="button" class="btn btn-sm" id="btnCopyXml" title="Копировать XML в буфер обмена">Копировать</button>
+                    <button type="button" class="btn btn-sm btn-ai" id="btnAskDeepSeek" title="Отправить XML из этого окна в DeepSeek (активный режим)">✨ Отправить DeepSeek</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="btnApplyXml" title="Применить внесённые в XML изменения к редактору">Применить ▶</button>
+                </div>
+            </div>
+            <textarea id="xmlEditor" class="xml-textarea" spellcheck="false"></textarea>
+
+            <!-- Панель промпта: выбор режима (два основных промпта из Gist + свои) + активный промпт -->
+            <div class="prompt-bar" id="promptBar">
+                <div class="prompt-mode-row">
+                    <span class="prompt-mode-label">Режим DeepSeek:</span>
+                    <select id="dsModeSelect" class="input-base input-sm mode-select" title="Основные промпты загружаются из Gist; свои промпты можно добавить в окне «Промпты»"></select>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnManagePrompts" title="Все промпты: добавление своих, редактирование">📝 Промпты…</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnEditPrompt" title="Открыть активный промпт в текстовом редакторе">✎ Редактор</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnCopyPrompt" title="Скопировать активный промпт">📋 Копировать</button>
+                    <button type="button" class="btn btn-sm btn-ghost" id="btnReloadPrompt" title="Перезагрузить активный промпт из Gist (отменит правки)">↻ Gist</button>
+                    <a class="prompt-gist-link hidden" id="promptGistLink" href="#" target="_blank" rel="noopener" title="Открыть Gist с активным промптом">Промпт на Gist ↗</a>
+                </div>
+                <textarea class="prompt-text prompt-editable" id="promptText" spellcheck="false" readonly
+                    title="Активный промпт (только просмотр). Для правки — кнопка «✎ Редактор»"></textarea>
+            </div>
+        </aside>
+
+        <div class="resizer" id="resizer" title="Потяните, чтобы изменить ширину панели XML"></div>
+
+        <section class="editor-scroll-container" id="editorContainer">
+            <div class="center-container">
+                <!-- Название теста + ссылка на задание -->
+                <div class="topic-row">
+                    <input type="text" id="quizName" class="input-base topic-input" placeholder="Название теста (используется в описании GIST)…">
+                    <span class="task-link-inline hidden" id="gistLinkContainer">
+                        <a id="publishedTaskLink" class="url-text url-sm" href="#" target="_blank" rel="noopener" title="Ссылка на задание для студентов">—</a>
+                        <button type="button" class="btn-icon" id="btnCopyTaskUrl" title="Скопировать ссылку на задание">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        </button>
+                        <button type="button" class="btn btn-sm" id="btnOpenTaskTop" title="Открыть задание в приложении тестирования и скопировать ссылку">Открыть задание</button>
+                    </span>
+                </div>
+
+                <!-- Навигация по формулам -->
+                <div class="nav-bar">
+                    <button type="button" id="prevBtn" class="nav-btn" disabled>← Предыдущий</button>
+                    <div id="formulaTabs" class="fragment-tabs"></div>
+                    <button type="button" id="nextBtn" class="nav-btn">Следующий →</button>
+                    <div class="nav-spacer"></div>
+                    <button type="button" class="btn btn-sm" id="btnDuplicateFormula" title="Дублировать текущую формулу">⧉ Дублировать</button>
+                    <button type="button" class="btn btn-sm" id="btnAddFormula" title="Добавить новую формулу">+ Формула</button>
+                    <button type="button" class="btn btn-sm btn-danger-outline" id="btnDeleteFormula" title="Удалить текущую формулу">✕ Удалить</button>
+                </div>
+
+                <!-- Редактор формулы -->
+                <div class="card" id="formulaCard">
+                    <div class="card-header">
+                        <h2>Формула <span id="formulaNumber">1</span></h2>
+                        <div id="issuesBox" class="issues-box ok" title="Проверка готовности формулы к тесту">✓ Формула готова к тесту</div>
+                    </div>
+
+                    <div class="field-block">
+                        <label class="label" for="formulaName">Название формулы (видит студент)</label>
+                        <textarea id="formulaName" class="input-base formula-name" rows="2" placeholder="Например: Кинетическая энергия"></textarea>
+                    </div>
+
+                    <div class="field-block">
+                        <div class="label-row">
+                            <label class="label" for="formulaLatex">LaTeX</label>
+                            <span class="hint">фрагменты для сборки вычисляются автоматически</span>
+                        </div>
+                        <textarea id="formulaLatex" class="input-base code question-text" spellcheck="false" placeholder="E_k = \frac{m v^2}{2}"></textarea>
+                    </div>
+
+                    <!-- Панель вставки LaTeX-конструкций: вставка в последнее активное поле -->
+                    <div class="fx-bar" id="fxBar">
+                        <span class="fx-label">Вставить:</span>
+                        <button type="button" class="fx-btn" data-before="\frac{" data-after="}{}" title="Дробь">x/y</button>
+                        <button type="button" class="fx-btn" data-before="\sqrt{" data-after="}" title="Корень">√x</button>
+                        <button type="button" class="fx-btn" data-before="^{" data-after="}" title="Степень">xⁿ</button>
+                        <button type="button" class="fx-btn" data-before="_{" data-after="}" title="Индекс">xₙ</button>
+                        <button type="button" class="fx-btn" data-before="\text{" data-after="}" title="Текст внутри формулы">text</button>
+                        <button type="button" class="fx-btn" data-before="\left(" data-after="\right)" title="Скобки">( )</button>
+                        <span class="fx-sep"></span>
+                        <button type="button" class="fx-btn" data-before="\alpha" data-after="" title="Альфа">α</button>
+                        <button type="button" class="fx-btn" data-before="\beta" data-after="" title="Бета">β</button>
+                        <button type="button" class="fx-btn" data-before="\gamma" data-after="" title="Гамма">γ</button>
+                        <button type="button" class="fx-btn" data-before="\pi" data-after="" title="Пи">π</button>
+                        <button type="button" class="fx-btn" data-before="\omega" data-after="" title="Омега">ω</button>
+                        <span class="fx-sep"></span>
+                        <button type="button" class="fx-btn" data-before="\times" data-after="" title="Умножение">×</button>
+                        <button type="button" class="fx-btn" data-before="\pm" data-after="" title="Плюс-минус">±</button>
+                        <button type="button" class="fx-btn" data-before="\leq" data-after="" title="Меньше или равно">≤</button>
+                        <button type="button" class="fx-btn" data-before="\geq" data-after="" title="Больше или равно">≥</button>
+                        <button type="button" class="fx-btn" data-before="\neq" data-after="" title="Не равно">≠</button>
+                        <button type="button" class="fx-btn" data-before="\infty" data-after="" title="Бесконечность">∞</button>
+                    </div>
+
+                    <div class="questions-section">
+                        <div class="questions-toolbar">
+                            <h3>Фрагменты для сборки — порядок и есть правильный ответ <span class="count-badge" id="fragmentsCount">0</span></h3>
+                        </div>
+                        <div id="fragmentsPreview" class="fragments-preview"></div>
+                        <p class="hint">Формула разбивается на фрагменты автоматически. Студент собирает её из перемешанных фрагментов, поэтому одинаковые фрагменты и слишком короткое разбиение усложняют проверку.</p>
+                    </div>
+                </div>
+
+                <!-- Условные обозначения -->
+                <div class="card" id="symbolsCard">
+                    <div class="card-header">
+                        <h2>Условные обозначения</h2>
+                        <button type="button" class="btn btn-sm" id="btnAddSymbol" title="Добавить обозначение">+ Обозначение</button>
+                    </div>
+                    <div id="symbolsContainer"></div>
+                    <p class="hint">Обозначения показываются студенту как подсказка перед сборкой формулы (символ — расшифровка).</p>
+                </div>
+
+                <!-- Предпросмотр -->
+                <div class="card" id="previewCard">
+                    <div class="card-header">
+                        <h2>Предпросмотр (KaTeX)</h2>
+                        <span class="hint">так формулу увидит студент</span>
+                    </div>
+                    <div id="previewBox" class="preview-box"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== Правая панель: быстрый обзор всех формул с проверкой готовности ===== -->
+        <aside class="review-panel hidden" id="reviewPanel">
+            <div class="review-header">
+                <span>Обзор задания</span>
+                <div class="flex-gap">
+                    <span class="review-summary" id="reviewSummary"></span>
+                    <button type="button" class="btn-icon" id="btnReviewClose" aria-label="Закрыть обзор">✕</button>
+                </div>
+            </div>
+            <div class="review-body" id="reviewBody"></div>
+        </aside>
+
+    </main>
+
+    <!-- ===== Статусная строка ===== -->
+    <footer class="status-bar">
+        <div class="status-item" id="statusText">Готово</div>
+        <div class="status-item status-meta" id="statusMeta"></div>
+    </footer>
+
+    <!-- ===== Модальное окно: настройки ===== -->
+    <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 id="settingsTitle">Настройки</h3>
+                <button type="button" class="btn-icon" id="btnSettingsClose" aria-label="Закрыть настройки">✕</button>
+            </div>
+
+            <div class="modal-body">
+                <section class="settings-section">
+                    <h4>Токены сервисов</h4>
+                    <div class="token-row">
+                        <label class="label" for="githubToken">GitHub Token (для Gist)</label>
+                        <div class="flex-gap">
+                            <input type="password" id="githubToken" class="input-base input-mono" placeholder="ghp_…">
+                            <a class="get-link" href="https://github.com/settings/tokens/new" target="_blank" rel="noopener">Получить</a>
+                        </div>
+                    </div>
+                    <div class="token-row">
+                        <label class="label" for="deepseekToken">DeepSeek Token (для AI)</label>
+                        <div class="flex-gap">
+                            <input type="password" id="deepseekToken" class="input-base input-mono" placeholder="sk-…">
+                            <a class="get-link" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Получить</a>
+                        </div>
+                    </div>
+                    <p class="hint">Токены хранятся только в localStorage вашего браузера и используются всеми редакторами suite.</p>
+                </section>
+
+                <section class="settings-section">
+                    <h4>Публикация и сохранение</h4>
+                    <p class="hint"><strong>Автосохранение на диск компьютера</strong> включается переключателем рядом с кнопкой «💾 Сохранить в файл» и срабатывает только при изменениях в задании.</p>
+                    <p class="hint"><strong>Публикация</strong> выполняется кнопкой «🚀 Публикация» (GitHub Gist). После публикации изменения задания автоматически сохраняются в тот же Gist. Ссылка на задание подставляется в строку названия теста.</p>
+                </section>
+
+                <section class="settings-section">
+                    <h4>Промпты DeepSeek</h4>
+                    <p class="hint">Основные промпты загружаются из Gist и всегда доступны в панели «Режим DeepSeek»:</p>
+                    <p class="hint">
+                        <a class="get-link" href="https://gist.github.com/tregubovvn/e32e6561ac50b1866e5cb9de2a238f68" target="_blank" rel="noopener">Промпт для формул ↗</a> ·
+                        <a class="get-link" href="https://gist.github.com/tregubovvn/195317d885acce603759b1cdcf6942e4" target="_blank" rel="noopener">Промпт для задач ↗</a>
+                    </p>
+                </section>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btnSettingsDone">Готово</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: загрузка из Gist ===== -->
+    <div class="modal-overlay" id="loadModal" role="dialog" aria-modal="true" aria-labelledby="loadTitle">
+        <div class="modal">
+            <h3 id="loadTitle" class="modal-h3">Загрузить из GitHub Gist</h3>
+            <label class="label" for="loadGistId">Ссылка на Gist</label>
+            <input type="text" id="loadGistId" class="input-base" placeholder="https://gist.github.com/user/abc123…">
+            <p class="hint">Можно вставить ссылку на задание, raw-ссылку или просто ID Gist.</p>
+            <div class="modal-actions">
+                <button type="button" class="btn" id="btnLoadCancel">Отмена</button>
+                <button type="button" class="btn btn-primary" id="btnLoadConfirm">Загрузить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: все промпты ===== -->
+    <div class="modal-overlay" id="promptsModal" role="dialog" aria-modal="true" aria-labelledby="promptsTitle">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 id="promptsTitle">Промпты DeepSeek</h3>
+                <button type="button" class="btn-icon" id="btnPromptsClose" aria-label="Закрыть окно промптов">✕</button>
+            </div>
+            <div class="modal-body prompts-modal-body">
+                <p class="hint">Основные промпты (помечены ☁) загружаются из Gist. Свои промпты добавляются кнопкой «+ Новый промпт» и хранятся локально в браузере.</p>
+                <ul class="prompt-list" id="promptList"></ul>
+                <div class="prompt-add-row">
+                    <input type="text" id="newPromptName" class="input-base" placeholder="Название нового промпта">
+                    <button type="button" class="btn btn-sm" id="btnAddPrompt">+ Новый промпт</button>
+                </div>
+                <div class="prompt-gist-actions">
+                    <button type="button" class="btn btn-sm" id="btnReloadPrompts" title="Перезагрузить основные промпты из Gist (отменит локальные правки)">↻ Загрузить из Gist</button>
+                </div>
+                <p class="hint">Правки текстов промптов сохраняются в браузере (localStorage). «↻ Загрузить из Gist» отменяет правки основных промптов.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btnPromptsDone">Готово</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: текстовый редактор активного промпта ===== -->
+    <div class="modal-overlay" id="promptEditorModal" role="dialog" aria-modal="true" aria-labelledby="promptEditorTitle">
+        <div class="modal modal-xl">
+            <div class="modal-header">
+                <h3 id="promptEditorTitle">Редактор промпта</h3>
+                <button type="button" class="btn-icon" id="btnPromptEditorClose" aria-label="Закрыть редактор промпта">✕</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="promptEditorArea" class="prompt-editor-area" spellcheck="false"></textarea>
+                <p class="hint" id="promptEditorInfo"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn" id="btnPromptEditorCancel">Отмена</button>
+                <button type="button" class="btn btn-primary" id="btnPromptEditorSave">Сохранить промпт</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+
+    <script src="app.js"></script>
+</body>
+</html>
