@@ -1539,6 +1539,8 @@ function updateGistLinkDisplay() {
 }
 
 const PUBLISHED_LINK_ID = 'publishedTestLink';
+// id кликабельной ссылки, встраиваемой в строку названия рядом с кнопками.
+const PUBLISHED_INLINE_ID = 'publishedTestLinkInline';
 
 function setPublishedLinkDisplay(link) {
     let row = document.getElementById(PUBLISHED_LINK_ID);
