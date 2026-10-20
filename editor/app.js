@@ -12,9 +12,18 @@ const AUTOSAVE_DEBOUNCE_MS = 1500;      // задержка автосохран
 const TEST_APP_BASE_URL = 'https://tregubovvn.github.io/ft/index.html';
 const GIST_FILENAME = 'formula_test.xml';
 
+// Публикация на GITverse — НЕ сниппеты, а обычный репозиторий пользователя:
+// файл formula_test.xml в ветке master, студент открывает его по raw-ссылке.
+const GITVERSE_API_BASE = 'https://gitverse.ru/api/v1';           // REST API GITverse (аналогичен GitHub)
+const GITVERSE_REPO_NAME = 'formula-tests';                       // имя репозитория для публикаций
+const GITVERSE_FILE_PATH = 'formula_test.xml';                    // путь файла внутри репозитория
+const GITVERSE_BRANCHES = ['master', 'main'];                     // ветки, которые пробуем при обновлении
+const GITVERSE_DEFAULT_BRANCH = 'master';                         // ветка для создания репозитория и нового файла
+
 // Стартовый шаблон — демонстрация обоих форматов (простой и расширенный)
 const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <formulas name="Демонстрационный тест">
+  <meta author="" discipline="" university="" audience="" />
   <formula name="Теорема Пифагора">a^2 + b^2 = c^2</formula>
   <formula name="Квадратное уравнение">x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}</formula>
   <formula name="Кинетическая энергия">
@@ -31,6 +40,7 @@ const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 const LS = {
     ghToken: 'gh_token',
     dsToken: 'ds_token',
+    gvToken: 'gv_token',                     // токен GITverse (публикация файла в репозиторий)
     autoSave: 'editor_autosave_enabled',
     dsMode: 'editor_ds_mode_ft',                // id активного промпта/режима
     promptEdits: 'editor_ds_prompt_edits_ft',   // отредактированные промпты {id: text}
@@ -48,13 +58,23 @@ const READY_MARKER = '[FORMULA-XML-READY]';
 
 // --- Состояние ---
 const state = {
-    formData: { name: '', formulas: [] },    // name — название теста (в описание GIST)
+    formData: { name: '', formulas: [], meta: emptyMeta() },  // name — название теста (в описание GIST)
     currentFormulaIndex: 0,
     gistId: null,
     gistUrl: null,
     rawUrl: null,
     gistFilename: GIST_FILENAME,
+    // Публикация на GITverse (аналог GitHub Gist): файл в репозитории пользователя.
+    // gitverseOwner — логин владельца токена; gitverseRepo — имя репозитория;
+    // gitverseBranch — ветка, в которой лежит файл; gitverseFileSha — SHA файла для PUT-обновления.
+    gitverseOwner: null,
+    gitverseRepo: GITVERSE_REPO_NAME,
+    gitverseBranch: null,
+    gitverseFileSha: null,
+    gitverseUrl: null,       // страница файла в веб-интерфейсе GITverse
+    gitverseRawUrl: null,    // raw-ссылка, по которой тест открывается у студента
     dirty: false,               // есть несохранённые изменения в задании (файл на диске)
+    publishedDirty: false,      // были изменения ПОСЛЕ последней публикации — нужно публиковать заново
     isSaving: false,            // идёт запись в GIST
     needsAnotherSave: false,
     syncTimeout: null,
@@ -66,6 +86,8 @@ const state = {
     aiBusy: false,              // идёт запрос к DeepSeek (интерфейс заблокирован)
     // Промпты DeepSeek: [{id, name, text, source:'gist'|'local', gistUrl?}]
     prompts: [],
+    // Предпросмотр решения «как у студента»: активная формула, пул и ответ студента
+    studentPreview: { index: 0, pool: [], placed: [] },
     // Флаг «изменение идёт из XML-панели» — не пересинхронизировать редактор -> XML
     applyingXmlToEditor: false,
     // Последнее активное поле ввода в редакторе — туда вставляются LaTeX-конструкции
@@ -86,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initResizer();
     bindEvents();
     loadPromptsFromGists();   // подтягиваем основные промпты из Gist
+    registerStudentAppShortcuts();  // Ctrl+Shift+P — открыть тест так, как его увидит студент
 });
 
 // Отладочный доступ к состоянию и ключевым функциям из консоли браузера.
@@ -93,7 +116,7 @@ Object.defineProperty(window, 'editorState', {
     get: () => ({
         state,
         api: {
-            publishToGist, saveToFile, loadFromDiskFile, askDeepSeek, setDsMode, currentDsMode,
+            publishToGist, publishToGitverse, republishCurrent, saveToFile, loadFromDiskFile, askDeepSeek, setDsMode, currentDsMode,
             generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt,
             openTask, copyTaskUrl, reloadActivePromptFromGist, savePromptEdit,
             addLocalPrompt, removePrompt, newQuiz,
@@ -101,6 +124,7 @@ Object.defineProperty(window, 'editorState', {
         fn: {
             updateLastSaveTimeLabel, recordDiskSave, setUiBusy, buildDsMessage, getPromptById,
             renderReviewPanel, findFormulaIssues, buildTaskUrl, parseLatexToFragments,
+            emptyMeta, metaHasContent, showMetaModal, openStudentPreview,
         },
     }),
 });
@@ -111,7 +135,7 @@ function cacheElements() {
         'formulaCard', 'formulaNumber', 'formulaName', 'formulaLatex', 'fxBar', 'issuesBox',
         'fragmentsPreview', 'fragmentsCount', 'symbolsContainer', 'btnAddSymbol',
         'previewBox', 'formulaTabs', 'prevBtn', 'nextBtn',
-        'statusText', 'statusMeta', 'toast', 'gistLinkContainer', 'publishedTaskLink',
+        'statusText', 'statusMeta', 'toast', 'gistLinkContainer', 'btnRepublish',
         'loadModal', 'loadGistId', 'settingsModal', 'publishMenu', 'promptBar', 'promptText', 'publishCheckNote',
         'reviewPanel', 'reviewBody', 'reviewSummary', 'btnToggleReview',
         'dsModeSelect', 'btnManagePrompts', 'btnEditPrompt', 'btnCopyPrompt', 'btnReloadPrompt',
@@ -119,6 +143,10 @@ function cacheElements() {
         'promptsModal', 'promptList', 'newPromptName', 'btnAddPrompt',
         'btnReloadPrompts',
         'promptEditorModal', 'promptEditorArea', 'promptEditorInfo',
+        // Метаинформация теста (сохраняется в XML)
+        'metaModal', 'metaAuthor', 'metaDiscipline', 'metaUniversity', 'metaAudience',
+        // Проверка решения «как у студента»
+        'studentPreviewModal', 'spCounter', 'spFormulaName', 'spSymbols', 'spDropZone', 'spPool', 'spFeedback',
     ];
     els = {};
     ids.forEach(id => { els[id] = document.getElementById(id); });
@@ -132,18 +160,36 @@ function bindEvents() {
     // Верхняя панель
     on('btnNewQuiz', 'click', newQuiz);
     on('btnPublishGist', 'click', () => { hidePublishMenu(); publishToGist(); });
+    on('btnPublishGitverse', 'click', () => { hidePublishMenu(); publishToGitverse(); });
     on('btnLoadGist', 'click', showLoadModal);
     on('btnLoadDiskFile', 'click', loadFromDiskFile);
     on('btnSaveFile', 'click', saveToFile);
+    on('btnMetaInfo', 'click', showMetaModal);
+    on('btnStudentPreview', 'click', openStudentPreview);
     on('btnPublish', 'click', (e) => { e.stopPropagation(); togglePublishMenu(); });
     on('btnSettings', 'click', showSettingsModal);
     on('btnCopyXml', 'click', copyXml);
     on('btnApplyXml', 'click', applyXmlChanges);
     on('btnAskDeepSeek', 'click', () => askDeepSeek(currentDsMode()));
 
-    // Ссылка на задание — в строке названия (над навигацией по формулам)
+    // Ссылка на задание — в строке названия: копировать + предупреждение о переопубликации
     on('btnCopyTaskUrl', 'click', copyTaskUrl);
-    on('btnOpenTaskTop', 'click', openTask);
+    on('btnRepublish', 'click', republishCurrent);
+
+    // Окно «Метаинформация теста» (данные сохраняются в XML)
+    on('btnMetaClose', 'click', hideMetaModal);
+    on('btnMetaSave', 'click', saveMetaFromModal);
+    els.metaModal.addEventListener('click', (e) => { if (e.target === els.metaModal) hideMetaModal(); });
+
+    // Окно проверки решения «как у студента»
+    on('btnSpClose', 'click', closeStudentPreview);
+    on('btnSpReset', 'click', resetStudentPreviewAnswer);
+    on('btnSpPrev', 'click', () => studentPreviewGo(-1));
+    on('btnSpNext', 'click', () => studentPreviewGo(1));
+    on('btnSpCheck', 'click', checkStudentPreviewAnswer);
+    els.studentPreviewModal.addEventListener('click', (e) => {
+        if (e.target === els.studentPreviewModal) closeStudentPreview();
+    });
 
     // Правая панель обзора формул
     els.btnToggleReview.addEventListener('click', toggleReviewPanel);
@@ -223,12 +269,13 @@ function bindEvents() {
     els.settingsModal.addEventListener('click', (e) => { if (e.target === els.settingsModal) hideSettingsModal(); });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            hideLoadModal(); hideSettingsModal(); hidePromptsModal(); hidePromptEditor(); hidePublishMenu();
+            hideLoadModal(); hideSettingsModal(); hidePromptsModal(); hidePromptEditor();
+            hidePublishMenu(); hideMetaModal(); closeStudentPreview();
         }
     });
 
     // Поля настроек (токены) + переключатель автосохранения
-    ['githubToken', 'deepseekToken'].forEach(id => {
+    ['githubToken', 'deepseekToken', 'gitverseToken'].forEach(id => {
         document.getElementById(id).addEventListener('change', saveSettings);
     });
     els.autoSaveToggle.addEventListener('change', () => {
@@ -305,17 +352,20 @@ function currentFormula() {
 function loadSettings() {
     document.getElementById('githubToken').value = localStorage.getItem(LS.ghToken) || '';
     document.getElementById('deepseekToken').value = localStorage.getItem(LS.dsToken) || '';
+    document.getElementById('gitverseToken').value = localStorage.getItem(LS.gvToken) || '';
     els.autoSaveToggle.checked = localStorage.getItem(LS.autoSave) === '1';
 }
 
 function saveSettings() {
     localStorage.setItem(LS.ghToken, document.getElementById('githubToken').value.trim());
     localStorage.setItem(LS.dsToken, document.getElementById('deepseekToken').value.trim());
+    localStorage.setItem(LS.gvToken, document.getElementById('gitverseToken').value.trim());
     localStorage.setItem(LS.autoSave, els.autoSaveToggle.checked ? '1' : '0');
 }
 
 function getGithubToken() { return document.getElementById('githubToken').value.trim(); }
 function getDeepseekToken() { return document.getElementById('deepseekToken').value.trim(); }
+function getGitverseToken() { return document.getElementById('gitverseToken').value.trim(); }
 function autoSaveEnabled() { return els.autoSaveToggle.checked; }
 
 // Активный режим DeepSeek = id промпта из state.prompts
@@ -607,8 +657,17 @@ function parseXmlToDataQuiet(xmlString) {
         state.formData.name = root.getAttribute('name') || '';
         els.quizName.value = state.formData.name;
 
+        // Метаинформация теста: <meta author discipline university audience /> (прямо под корнем)
+        const metaNode = root.querySelector(':scope > meta');
+        state.formData.meta = metaNode ? {
+            author: metaNode.getAttribute('author') || '',
+            discipline: metaNode.getAttribute('discipline') || '',
+            university: metaNode.getAttribute('university') || '',
+            audience: metaNode.getAttribute('audience') || '',
+        } : emptyMeta();
+
         const fs = [];
-        doc.querySelectorAll('formula').forEach(f => {
+        root.querySelectorAll(':scope > formula').forEach(f => {
             const latexNode = f.querySelector('latex');
             const latex = latexNode ? latexNode.textContent.trim() : f.textContent.trim();
             const symbols = [];
@@ -622,15 +681,64 @@ function parseXmlToDataQuiet(xmlString) {
 
         state.formData.formulas = fs;
         if (state.currentFormulaIndex >= fs.length) state.currentFormulaIndex = 0;
+        syncMetaInputs();
         return true;
     } catch (e) {
         return false;   // сообщение показывает вызвавший (parseXmlToData) или «тихий» режим
     }
 }
 
+// --- Метаинформация теста (ФИО автора, дисциплина, университет, целевая аудитория) ---
+function emptyMeta() {
+    return { author: '', discipline: '', university: '', audience: '' };
+}
+
+function metaHasContent(meta) {
+    const m = meta || (state.formData && state.formData.meta);
+    return !!(m && Object.values(m).some(v => (v || '').trim()));
+}
+
+// Заполнить поля модального окна метаинформации текущим состоянием
+function syncMetaInputs() {
+    const m = state.formData.meta || emptyMeta();
+    els.metaAuthor.value = m.author || '';
+    els.metaDiscipline.value = m.discipline || '';
+    els.metaUniversity.value = m.university || '';
+    els.metaAudience.value = m.audience || '';
+}
+
+function showMetaModal() {
+    syncMetaInputs();
+    els.metaModal.classList.add('show');
+    els.metaAuthor.focus();
+}
+
+function hideMetaModal() {
+    els.metaModal.classList.remove('show');
+}
+
+// «Сохранить в XML»: поля окна -> состояние -> XML-панель (+ автосохранение на диск/Gist)
+function saveMetaFromModal() {
+    state.formData.meta = {
+        author: els.metaAuthor.value.trim(),
+        discipline: els.metaDiscipline.value.trim(),
+        university: els.metaUniversity.value.trim(),
+        audience: els.metaAudience.value.trim(),
+    };
+    updateXmlOutput();
+    hideMetaModal();
+    showToast('Метаинформация сохранена в XML-файл задания');
+}
+
 function generateXml() {
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<formulas name="' + escapeXml(state.formData.name || '') + '">\n';
+    // Метаинформация пишется всегда (если заполнена) — все данные хранятся в XML-файле
+    const meta = state.formData.meta || emptyMeta();
+    if (metaHasContent(meta)) {
+        xml += '  <meta author="' + escapeXml(meta.author) + '" discipline="' + escapeXml(meta.discipline)
+             + '" university="' + escapeXml(meta.university) + '" audience="' + escapeXml(meta.audience) + '" />\n';
+    }
     state.formData.formulas.forEach(f => {
         const symbols = (f.symbols || []).filter(s => (s.char && s.char.trim()) || (s.name && s.name.trim()));
         if (symbols.length > 0) {
@@ -895,11 +1003,40 @@ function updateXmlOutput(opts = {}) {
     if (!opts.silent) markTaskChanged();
 }
 
-// Единственная точка «в задании есть изменения»: dirty + автосохранения
+// Единственная точка «в задании есть изменения»: dirty + предупреждение о переопубликации
+// (если задание уже публиковалось) + автосохранения на диск / в Gist.
 function markTaskChanged() {
     state.dirty = true;
+    if (state.gistId || state.gitverseId) state.publishedDirty = true;
+    updatePublishWarning();
     scheduleAutoSave();
     scheduleGistSave();
+}
+
+// Предупреждение в строке задания: после изменений тест нужно опубликовать заново.
+// Ссылка на открытие теста студентом убрана — остаётся только кнопка копирования.
+function updatePublishWarning() {
+    const btn = els.btnRepublish;
+    if (!btn) return;
+    const show = state.publishedDirty && !!(state.gistId || state.gitverseId);
+    btn.classList.toggle('hidden', !show);
+    btn.title = show
+        ? 'В задании есть изменения после публикации — опубликуйте повторно, иначе студенты увидят старую версию'
+        : '';
+}
+
+// Кнопка «⚠ Публиковать заново» — обновляет все привязанные площадки
+async function republishCurrent() {
+    if (!state.publishedDirty) {
+        showToast('Изменений после последней публикации нет');
+        return;
+    }
+    if (!checkBeforePublish()) return;
+    if (state.gistId) await saveToGist();
+    if (state.gitverseId) await saveToGitverseSnippet();
+    if (!state.gistId && !state.gitverseId) {
+        showToast('Задание ещё нигде не опубликовано — выберите площадку в меню «🚀 Публикация»', true);
+    }
 }
 
 // Подпись под переключателем «Автосохранение»: время последнего сохранения на диск
@@ -1262,7 +1399,7 @@ function renderReviewPanel() {
 }
 
 // ============================================================
-// Публикация: GitHub Gist (только по кнопке, возвращает ссылку)
+// Публикация: GitHub Gist и GITverse (только по кнопке, возвращает ссылку)
 // ============================================================
 function togglePublishMenu() {
     els.publishMenu.classList.toggle('hidden');
@@ -1274,6 +1411,13 @@ function publishToGist() {
     if (!checkBeforePublish()) return;
     if (state.gistId) return saveToGist();
     return createNewGist();
+}
+
+// Публикация на GITverse: если сниппет уже привязан — обновляем его, иначе создаём новый.
+function publishToGitverse() {
+    if (!checkBeforePublish()) return;
+    if (state.gitverseId) return updateGitverseSnippet();
+    return createNewGitverseSnippet();
 }
 
 // Проверка готовности к публикации; при проблемах — открываем панель обзора.
@@ -1290,10 +1434,13 @@ function checkBeforePublish() {
     return false;
 }
 
-// Ссылка на задание в приложении тестирования (открывается по raw-ссылке XML)
+// Ссылка на задание в приложении тестирования (открывается по raw-ссылке XML).
+// Приоритет — GitHub Gist; если он недоступен, но опубликовано на GITverse — ссылка на GITverse.
 function buildTaskUrl() {
-    if (!state.rawUrl) return state.gistUrl || '';
-    return TEST_APP_BASE_URL + '?file=' + encodeURIComponent(state.rawUrl);
+    if (state.rawUrl) return TEST_APP_BASE_URL + '?file=' + encodeURIComponent(state.rawUrl);
+    if (state.gistUrl) return state.gistUrl;
+    if (state.gitverseRawUrl) return TEST_APP_BASE_URL + '?file=' + encodeURIComponent(state.gitverseRawUrl);
+    return state.gitverseUrl || '';
 }
 
 // Показать ссылку на задание после публикации: статус + toast + копирование
@@ -1303,19 +1450,15 @@ function showPublishedLink(title, link) {
     if (link && navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
 }
 
-// Ссылка на задание — показывается в строке названия теста: ссылка + копировать + открыть.
+// В строке названия показываем контейнер задания (копировать ссылку / предупреждение),
+// самой ссылки-гипертекста на открытие теста больше нет.
 function updateGistLinkDisplay() {
     const link = buildTaskUrl();
-    if (link) {
-        els.publishedTaskLink.href = link;
-        els.publishedTaskLink.textContent = link;
-        els.gistLinkContainer.classList.remove('hidden');
-    } else {
-        els.gistLinkContainer.classList.add('hidden');
-    }
+    els.gistLinkContainer.classList.toggle('hidden', !link);
+    updatePublishWarning();
 }
 
-// Копирование ссылки на задание (кнопка рядом со ссылкой)
+// Копирование ссылки на задание (кнопка рядом с предупреждением о переопубликации)
 function copyTaskUrl() {
     const link = buildTaskUrl();
     if (!link) return showToast('Задание ещё не опубликовано', true);
@@ -1345,6 +1488,7 @@ async function createNewGist() {
         state.gistUrl = data.html_url;
         state.rawUrl = data.files[state.gistFilename] ? data.files[state.gistFilename].raw_url : null;
         state.dirty = false;
+        state.publishedDirty = false;
 
         updateGistLinkDisplay();
         showPublishedLink('GIST опубликован', buildTaskUrl());
