@@ -47,10 +47,30 @@ const LS = {
     lastSaveTime: 'editor_last_save_time_ft',   // время последнего сохранения файла на диск
 };
 
-// Два ОСНОВНЫХ промпта редактора формул — текст всегда берётся с gist'ов
+// Два ОСНОВНЫХ промпта редактора формул — текст всегда берётся с gist'ов.
+// rawUrls — прямые ссылки на сырое содержимое файла Gist (основной способ загрузки:
+// gist.githubusercontent.com не требует авторизации и не упирается в лимиты api.github.com).
 const BUILTIN_PROMPTS = [
-    { id: 'ft-formulas', name: 'Промпт для формул', gistUrl: 'https://gist.github.com/tregubovvn/e32e6561ac50b1866e5cb9de2a238f68' },
-    { id: 'ft-tasks', name: 'Промпт для задач', gistUrl: 'https://gist.github.com/tregubovvn/195317d885acce603759b1cdcf6942e4' },
+    {
+        id: 'ft-formulas', name: 'Промпт для формул',
+        gistUrl: 'https://gist.github.com/tregubovvn/e32e6561ac50b1866e5cb9de2a238f68',
+        rawUrls: [
+            'https://gist.githubusercontent.com/tregubovvn/e32e6561ac50b1866e5cb9de2a238f68/raw/FormulaBuilder.md',
+        ],
+    },
+    {
+        id: 'ft-tasks', name: 'Промпт для задач',
+        gistUrl: 'https://gist.github.com/tregubovvn/195317d885acce603759b1cdcf6942e4',
+        rawUrls: [
+            'https://gist.githubusercontent.com/tregubovvn/195317d885acce603759b1cdcf6942e4/raw/FormulaBuilderTask.md',
+        ],
+    },
+];
+
+// CORS-прокси на случай, если GitHub заблокирует прямой запрос из браузера
+const PROMPT_FETCH_PROXIES = [
+    (url) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    (url) => 'https://corsproxy.io/?url=' + encodeURIComponent(url),
 ];
 
 // Конец сообщения модели — этим маркером модель подтверждает, что XML готов
@@ -389,7 +409,16 @@ function renderModeSelect() {
     }
     const prompt = getPromptById(currentDsMode()) || state.prompts[0];
     if (document.activeElement !== els.promptText) {
-        els.promptText.value = prompt ? prompt.text : '';
+        els.promptText.value = (prompt && prompt.text) ? prompt.text : '';
+    }
+    // Если текст промпта не загрузился — показываем подсказку прямо в поле и на панели
+    if (prompt && !prompt.text) {
+        els.promptText.placeholder = 'Текст промпта не загрузился с Gist — нажмите «↻ Gist» для повторной загрузки';
+    } else {
+        els.promptText.placeholder = '';
+    }
+    if (els.promptBar) {
+        els.promptBar.classList.toggle('prompt-load-failed', !!(prompt && !prompt.text));
     }
     updatePromptGistLink();
 }
@@ -447,18 +476,64 @@ function buildDsMessage(mode) {
 // ============================================================
 // Промпты DeepSeek: основные — из Gist, свои — локально
 // ============================================================
-async function fetchGistRaw(url) {
+// Загрузка текста по URL с попытками через CORS-прокси (если GitHub/CORS заблокирует прямой запрос)
+async function fetchTextWithProxies(url) {
+    let lastErr = null;
+    for (const attempt of [url, ...PROMPT_FETCH_PROXIES.map((p) => p(url))]) {
+        try {
+            const res = await fetch(attempt);
+            if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+            const text = (await res.text()).trim();
+            // прокси может вернуть HTML-страницу ошибки вместо содержимого
+            if (!text || /^<(!doctype|html)/i.test(text)) { lastErr = new Error('Пустой или некорректный ответ'); continue; }
+            return text;
+        } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('Не удалось загрузить ' + url);
+}
+
+// Получение сырого текста Gist по его html-ссылке.
+// 1) Сначала прямые raw-ссылки (из BUILTIN_PROMPTS.rawUrls или ссылки вида .../raw/...):
+//    gist.githubusercontent.com отдаёт файлы без авторизации и лимитов API.
+// 2) Если их нет/не сработали — список файлов через api.github.com (например, если файл в Gist
+//    переименовали) и чтение актуального raw_url.
+async function fetchGistRaw(url, rawHints = []) {
     const m = url.match(/(?:gist\.github\.com|gist\.githubusercontent\.com)\/(?:[^/\s]+\/)?([0-9a-f]{7,})/i);
     if (!m) throw new Error('Некорректная ссылка на Gist: ' + url);
-    const res = await fetch('https://api.github.com/gists/' + m[1]);
-    if (!res.ok) throw new Error('HTTP ' + res.status + ' при загрузке Gist');
-    const data = await res.json();
-    const files = Object.values(data.files || {});
-    if (!files.length) throw new Error('В Gist нет файлов');
-    const preferred = files.find(f => /\.(md|txt)$/i.test(f.filename)) || files[0];
-    const rawRes = await fetch(preferred.raw_url);
-    if (!rawRes.ok) throw new Error('HTTP ' + rawRes.status + ' при чтении файла Gist');
-    return await rawRes.text();
+    const gistId = m[1];
+
+    const candidates = [...new Set([
+        ...rawHints,
+        // если передали прямую raw-ссылку — используем её как есть
+        /\/raw\//i.test(url) ? url : null,
+        // стабильные формы raw-ссылок для известных имён файлов
+        ...(['FormulaBuilder.md', 'FormulaBuilderTask.md'].map(f =>
+            `https://gist.githubusercontent.com/${gistId}/raw/${f}`)),
+    ].filter(Boolean))];
+
+    let firstRawErr = null;
+    for (const c of candidates) {
+        try { return await fetchTextWithProxies(c); }
+        catch (e) { if (!firstRawErr) firstRawErr = e; }
+    }
+
+    // Фолбэк: API Gist → raw_url актуального файла
+    try {
+        const res = await fetch('https://api.github.com/gists/' + gistId);
+        if (res.ok) {
+            const data = await res.json();
+            const files = Object.values(data.files || {});
+            if (files.length) {
+                const preferred = files.find(f => /\.(md|txt)$/i.test(f.filename)) || files[0];
+                return await fetchTextWithProxies(preferred.raw_url);
+            }
+            throw new Error('В Gist нет файлов');
+        }
+        throw new Error('HTTP ' + res.status + ' при загрузке Gist');
+    } catch (apiErr) {
+        throw new Error('Не удалось загрузить промпт с Gist: ' +
+            ((apiErr && apiErr.message) || '') + ' / raw: ' + ((firstRawErr && firstRawErr.message) || ''));
+    }
 }
 
 // Загрузка основных промптов из Gist; локальные промпты и правки сохраняются.
@@ -472,7 +547,7 @@ async function loadPromptsFromGists(opts = {}) {
 
     const builtins = await Promise.all(BUILTIN_PROMPTS.map(async (b) => {
         let text = '';
-        try { text = (await fetchGistRaw(b.gistUrl)).trim(); }
+        try { text = await fetchGistRaw(b.gistUrl, b.rawUrls || []); }
         catch (e) { console.warn('Не удалось загрузить промпт «' + b.name + '»:', e); }
         return { id: b.id, name: b.name, text, source: 'gist', gistUrl: b.gistUrl };
     }));

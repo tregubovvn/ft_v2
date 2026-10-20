@@ -590,6 +590,10 @@ body {
 }
 .prompt-text[readonly] { opacity: 0.85; }
 
+/* Промпт не загрузился с Gist — подсвечиваем панель, чтобы это было заметно */
+.prompt-bar.prompt-load-failed { border-top-color: #f59e0b; }
+.prompt-bar.prompt-load-failed .prompt-text { border-color: #f59e0b; }
+
 .prompt-editable {
     width: 100%;
     min-height: 72px;
