@@ -25,6 +25,7 @@
                 <button type="button" class="btn" id="btnLoadGist" title="Загрузить задание из GitHub Gist">☁️ Загрузить из Gist</button>
                 <button type="button" class="btn" id="btnLoadDiskFile" title="Открыть XML-файл с диска; он станет файлом, в который сохраняются изменения">📂 Загрузить из файла</button>
                 <button type="button" class="btn btn-primary" id="btnSaveFile" title="Сохранить XML в файл на диск компьютера">💾 Сохранить в файл</button>
+                <button type="button" class="btn" id="btnMetaInfo" title="Метаинформация теста: ФИО автора, дисциплина, университет, целевая аудитория (сохраняется в XML-файле)">👤 Метаинформация</button>
                 <div class="autosave-col">
                     <label class="switch-inline" title="Автосохранение на диск при изменениях в задании (только в ранее выбранный файл)">
                         <input type="checkbox" id="autoSaveToggle">
@@ -42,6 +43,10 @@
                     <button type="button" class="publish-item" id="btnPublishGist">
                         <strong>GitHub Gist</strong>
                         <span>Новый приватный Gist (или обновление текущего)</span>
+                    </button>
+                    <button type="button" class="publish-item" id="btnPublishGitverse">
+                        <strong>GITverse Snippet</strong>
+                        <span>Сниппет на GITverse (обновление текущего, если уже опубликован)</span>
                     </button>
                 </div>
             </div>
@@ -93,11 +98,10 @@
                 <div class="topic-row">
                     <input type="text" id="quizName" class="input-base topic-input" placeholder="Название теста (используется в описании GIST)…">
                     <span class="task-link-inline hidden" id="gistLinkContainer">
-                        <a id="publishedTaskLink" class="url-text url-sm" href="#" target="_blank" rel="noopener" title="Ссылка на задание для студентов">—</a>
+                        <button type="button" class="btn btn-sm" id="btnRepublish" title="В задании есть несохранённые изменения — опубликовать их повторно">⚠ Публиковать заново</button>
                         <button type="button" class="btn-icon" id="btnCopyTaskUrl" title="Скопировать ссылку на задание">
                             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                         </button>
-                        <button type="button" class="btn btn-sm" id="btnOpenTaskTop" title="Открыть задание в приложении тестирования и скопировать ссылку">Открыть задание</button>
                     </span>
                 </div>
 
@@ -179,6 +183,7 @@
                 <div class="card" id="previewCard">
                     <div class="card-header">
                         <h2>Предпросмотр (KaTeX)</h2>
+                        <button type="button" class="btn btn-sm" id="btnStudentPreview" title="Открыть окно, в котором можно посмотреть и проверить решение задания точно так, как это будет у студента">🎓 Проверить как студент</button>
                         <span class="hint">так формулу увидит студент</span>
                     </div>
                     <div id="previewBox" class="preview-box"></div>
@@ -229,6 +234,13 @@
                         <div class="flex-gap">
                             <input type="password" id="deepseekToken" class="input-base input-mono" placeholder="sk-…">
                             <a class="get-link" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Получить</a>
+                        </div>
+                    </div>
+                    <div class="token-row">
+                        <label class="label" for="gitverseToken">GITverse Token (для публикации сниппетов)</label>
+                        <div class="flex-gap">
+                            <input type="password" id="gitverseToken" class="input-base input-mono" placeholder="личный токен доступа">
+                            <a class="get-link" href="https://gitverse.ru/settings/tokens/personal" target="_blank" rel="noopener">Получить</a>
                         </div>
                     </div>
                     <p class="hint">Токены хранятся только в localStorage вашего браузера и используются всеми редакторами suite.</p>
@@ -309,6 +321,76 @@
             <div class="modal-footer">
                 <button type="button" class="btn" id="btnPromptEditorCancel">Отмена</button>
                 <button type="button" class="btn btn-primary" id="btnPromptEditorSave">Сохранить промпт</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: метаинформация теста (сохраняется в XML) ===== -->
+    <div class="modal-overlay" id="metaModal" role="dialog" aria-modal="true" aria-labelledby="metaTitle">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="metaTitle">👤 Метаинформация теста</h3>
+                <button type="button" class="btn-icon" id="btnMetaClose" aria-label="Закрыть метаинформацию">✕</button>
+            </div>
+            <div class="modal-body">
+                <p class="hint">Эти данные сохраняются в XML-файле задания (элемент <code>&lt;meta&gt;</code>) и отправляются вместе с публикацией.</p>
+                <div class="token-row">
+                    <label class="label" for="metaAuthor">ФИО автора</label>
+                    <input type="text" id="metaAuthor" class="input-base" placeholder="Иванов Иван Иванович">
+                </div>
+                <div class="token-row">
+                    <label class="label" for="metaDiscipline">Дисциплина</label>
+                    <input type="text" id="metaDiscipline" class="input-base" placeholder="Физика">
+                </div>
+                <div class="token-row">
+                    <label class="label" for="metaUniversity">Университет</label>
+                    <input type="text" id="metaUniversity" class="input-base" placeholder="МГТУ им. Н.Э. Баумана">
+                </div>
+                <div class="token-row">
+                    <label class="label" for="metaAudience">Целевая аудитория</label>
+                    <input type="text" id="metaAudience" class="input-base" placeholder="1 курс, группа МЕНЖ">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" id="btnMetaSave">Сохранить в XML</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Модальное окно: предпросмотр решения задания «как у студента» ===== -->
+    <div class="modal-overlay" id="studentPreviewModal" role="dialog" aria-modal="true" aria-labelledby="spTitle">
+        <div class="modal modal-xl sp-modal">
+            <div class="modal-header">
+                <h3 id="spTitle">🎓 Проверка решения — как у студента</h3>
+                <div class="flex-gap">
+                    <span class="review-summary" id="spCounter"></span>
+                    <button type="button" class="btn-icon" id="btnSpClose" aria-label="Закрыть предпросмотр">✕</button>
+                </div>
+            </div>
+            <div class="modal-body sp-body">
+                <div class="sp-formula-name" id="spFormulaName"></div>
+                <div class="sp-symbols hidden" id="spSymbols"></div>
+                <div class="sp-answer-zone">
+                    <div class="label-row">
+                        <span class="label">Ваш ответ (кликайте по фрагментам)</span>
+                        <span class="hint">порядок фрагментов и есть правильный ответ</span>
+                    </div>
+                    <div id="spDropZone" class="fragments-preview sp-drop"></div>
+                </div>
+                <div class="sp-pool-zone">
+                    <div class="label-row">
+                        <span class="label">Доступные фрагменты</span>
+                        <span class="hint">в перемешанном порядке, как у студента</span>
+                    </div>
+                    <div id="spPool" class="fragments-preview"></div>
+                </div>
+                <div id="spFeedback" class="sp-feedback hidden"></div>
+            </div>
+            <div class="ds-result-footer">
+                <button type="button" class="btn" id="btnSpReset" title="Вернуть все фрагменты в пул">↺ Сбросить</button>
+                <button type="button" class="btn btn-secondary" id="btnSpPrev">← Пред.</button>
+                <button type="button" class="btn btn-secondary" id="btnSpNext">След. →</button>
+                <button type="button" class="btn btn-primary" id="btnSpCheck">✔ Проверить решение</button>
             </div>
         </div>
     </div>
