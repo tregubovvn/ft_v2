@@ -85,3 +85,11 @@
         .submission-status { margin-top: 1.5rem; padding: 0.75rem 1.25rem; border-radius: 8px; font-size: 0.875rem; display: inline-flex; align-items: center; gap: 0.5rem; }
         .submission-status.success { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--success); }
         @media (max-width: 640px) { .card { padding: 1.25rem; } .fragment { padding: 0.5rem 0.875rem; font-size: 0.95rem; } .stat-value { font-size: 1.75rem; } .score-circle { width: 120px; height: 120px; } .score-value { font-size: 2rem; } .formula-name-display { font-size: 1.5rem; } .formula-title-card { padding: 1.5rem; } }
+
+/* ===== Сводка сдачи на экране результата ===== */
+.summary-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; }
+.summary-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+.summary-row { display: flex; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px dashed rgba(255,255,255,0.06); font-size: 0.95rem; }
+.summary-row:last-child { border-bottom: none; }
+.summary-label { color: var(--muted); min-width: 170px; flex-shrink: 0; }
+.summary-value { font-weight: 600; word-break: break-word; }

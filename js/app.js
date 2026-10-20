@@ -13,13 +13,15 @@ const WRONG_ANSWER_PENALTY = 0.03;   // доля процента, снимае�
 
 // ============ STATE ============
 let formulas = [];
+let quizTitle = '';
 let currentFormulaIndex = 0;
 let correctCount = 0;
 let wrongCount = 0;
 let results = [];
 let currentFragments = [];
 let placedFragments = [];
-let studentData = { lastName: '', firstName: '' };
+// lastName — ФИО студента, firstName — группа (исторически сложившиеся id полей)
+let studentData = { lastName: '', group: '' };
 let resultFormUrl = null;
 let testStartTime = 0;
 let timerInterval = null;
@@ -39,7 +41,7 @@ const $ = (id) => document.getElementById(id);
 
 const elements = {
     lastName: $('lastName'),
-    firstName: $('firstName'),
+    firstName: $('firstName'),   // поле «Группа» (исторический id)
     fileDropZone: $('fileDropZone'),
     fileInput: $('fileInput'),
     urlInput: $('urlInput'),
@@ -58,10 +60,12 @@ const elements = {
     resetBtn: $('resetBtn'),
     checkBtn: $('checkBtn'),
     checkBtnNext: $('checkBtnNext'),
+    finishBtn: $('finishBtn'),
     resultStudentName: $('resultStudentName'),
     resultTime: $('resultTime'),
     scoreCircle: $('scoreCircle'),
     scoreValue: $('scoreValue'),
+    submissionSummary: $('submissionSummary'),
     totalFormulas: $('totalFormulas'),
     correctAnswers: $('correctAnswers'),
     wrongAnswers: $('wrongAnswers'),
@@ -163,6 +167,14 @@ function loadFormulas(xmlString) {
     formulas = Array.from(xmlDoc.querySelectorAll('formula'))
         .map(parseFormulaNode)
         .filter(f => f.latex);
+
+    // Тема теста: атрибут name корня <quiz>, иначе первый <title> или <name>
+    const root = xmlDoc.documentElement;
+    quizTitle = (root && root.getAttribute('name')) || '';
+    if (!quizTitle) {
+        const titleNode = xmlDoc.querySelector('title') || xmlDoc.querySelector('name');
+        if (titleNode) quizTitle = (titleNode.textContent || '').trim();
+    }
 
     if (formulas.length > 0) {
         elements.formulasStatus.classList.remove('hidden');
@@ -424,6 +436,26 @@ function checkAnswerNext() {
     }, NEXT_FORMULA_DELAY_MS);
 }
 
+// Кнопка «Завершить»: зафиксировать текущий ответ и сразу перейти
+// на последний экран (результат теста), пропустив остальные формулы.
+function finishTest() {
+    const formula = formulas[currentFormulaIndex];
+    if (formula && placedFragments.length > 0) {
+        const correct = isAnswerCorrect();
+        results.push({
+            name: formula.name,
+            latex: formula.latex,
+            correct,
+            userAnswer: placedFragments.join(' '),
+            correctAnswer: currentFragments.join(' '),
+        });
+        if (correct) correctCount++;
+        else wrongCount++;
+    }
+    currentFormulaIndex = formulas.length; // следующий переход экрана → showResults()
+    loadCurrentFormula();
+}
+
 // ============ RESULTS ============
 function computeScore(percentage) {
     if (percentage >= 85) return 5;
@@ -445,6 +477,22 @@ function buildResultsDetailsHtml(resultsList) {
         </div>`).join('') + '</div>';
 }
 
+// Сводка сдачи на последнем экране: ФИО, группа, тема теста,
+// дата и время сдачи, затраченное время.
+function buildSubmissionSummaryHtml() {
+    const submissionDate = new Date();
+    const rows = [
+        ['ФИО', `${studentData.lastName} ${studentData.group}`.trim()],
+        ['Группа', studentData.group],
+        ['Тема теста', quizTitle || '(не указана в файле)'],
+        ['Дата и время сдачи', submissionDate.toLocaleString('ru-RU')],
+        ['Затраченное время', formatTime(totalTestTime)],
+    ];
+    return '<h3 class="summary-title">Сводка</h3>' + rows.map(([label, value]) =>
+        `<div class="summary-row"><span class="summary-label">${escapeHtml(label)}:</span>`
+        + `<span class="summary-value">${escapeHtml(value || '—')}</span></div>`).join('');
+}
+
 function showResults() {
     stopTimer();
     const total = formulas.length;
@@ -453,7 +501,10 @@ function showResults() {
         : 0;
     const mark = computeScore(percentage);
 
-    elements.resultStudentName.textContent = `${studentData.lastName} ${studentData.firstName}`;
+    elements.resultStudentName.textContent = `${studentData.lastName} ${studentData.group}`;
+    if (elements.submissionSummary) {
+        elements.submissionSummary.innerHTML = buildSubmissionSummaryHtml();
+    }
     elements.resultTime.textContent = formatTime(totalTestTime);
     elements.totalFormulas.textContent = total;
     elements.correctAnswers.textContent = correctCount;
@@ -481,7 +532,7 @@ function showResults() {
 function sendResultsToForm(percentage) {
     try {
         const params = new URLSearchParams({
-            student: `${studentData.lastName} ${studentData.firstName}`,
+            student: `${studentData.lastName} ${studentData.group}`,
             score: `${correctCount}/${formulas.length}`,
             percentage,
             time: formatTime(totalTestTime),
@@ -576,8 +627,8 @@ function bindWelcomeEvents() {
 
     elements.startBtn.addEventListener('click', () => {
         studentData.lastName = elements.lastName.value.trim();
-        studentData.firstName = elements.firstName.value.trim();
-        elements.studentName.textContent = `${studentData.lastName} ${studentData.firstName}`;
+        studentData.group = elements.firstName.value.trim();
+        elements.studentName.textContent = `${studentData.lastName} ${studentData.group}`;
         currentFormulaIndex = 0;
         correctCount = 0;
         wrongCount = 0;
@@ -595,6 +646,7 @@ function bindMainScreenEvents() {
     });
     elements.checkBtn.addEventListener('click', checkAnswer);
     elements.checkBtnNext.addEventListener('click', checkAnswerNext);
+    elements.finishBtn.addEventListener('click', finishTest);
 }
 
 function bindResultScreenEvents() {

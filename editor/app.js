@@ -1559,8 +1559,25 @@ function setPublishedLinkDisplay(link) {
         row.querySelector('.published-link-copy').textContent =
             state.publishedDirty ? '⚠ есть изменения после публикации' : 'ссылка скопирована в буфер';
         row.classList.remove('hidden');
+
+        // После успешной публикации добавляем кликабельную ссылку на опубликованное
+        // задание прямо в строку названия (рядом с кнопками копирования/повтора).
+        let inline = document.getElementById(PUBLISHED_INLINE_ID);
+        if (!inline) {
+            inline = document.createElement('a');
+            inline.id = PUBLISHED_INLINE_ID;
+            inline.className = 'published-link-inline';
+            inline.target = '_blank';
+            inline.rel = 'noopener';
+            inline.title = 'Открыть опубликованное задание в приложении тестирования';
+            els.gistLinkContainer.appendChild(inline);
+        }
+        inline.href = link;
+        inline.textContent = '🔗 Открыть опубликованное задание ↗';
     } else {
         row.classList.add('hidden');
+        const inline = document.getElementById(PUBLISHED_INLINE_ID);
+        if (inline) inline.remove();
     }
 }
 
