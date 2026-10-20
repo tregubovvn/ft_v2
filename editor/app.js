@@ -66,16 +66,11 @@ const state = {
     aiBusy: false,              // идёт запрос к DeepSeek (интерфейс заблокирован)
     // Промпты DeepSeek: [{id, name, text, source:'gist'|'local', gistUrl?}]
     prompts: [],
+    // Флаг «изменение идёт из XML-панели» — не пересинхронизировать редактор -> XML
+    applyingXmlToEditor: false,
+    // Последнее активное поле ввода в редакторе — туда вставляются LaTeX-конструкции
+    lastFocusedInput: null,
 };
-
-// Флаг «изменение идёт из XML-панели» — не пересинхронизировать редактор -> XML
-let applyingXmlToEditor = false;
-
-// Последнее активное поле ввода в редакторе — туда вставляются LaTeX-конструкции
-let lastFocused = null;
-
-// Отладочный доступ к состоянию из консоли браузера (window.editorState.state)
-window.editorState = { state, api: {}, fn: {} };
 
 let els = {};                   // кэш ссылок на DOM-элементы
 
@@ -90,17 +85,24 @@ document.addEventListener('DOMContentLoaded', () => {
     updateLastSaveTimeLabel();
     initResizer();
     bindEvents();
-    Object.assign(window.editorState.api, {
-        publishToGist, saveToFile, loadFromDiskFile, askDeepSeek, setDsMode, currentDsMode,
-        generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt,
-        openTask, copyTaskUrl, reloadActivePromptFromGist, savePromptEdit,
-        addLocalPrompt, removePrompt, newQuiz,
-    });
     loadPromptsFromGists();   // подтягиваем основные промпты из Gist
-    Object.assign(window.editorState.fn, {
-        updateLastSaveTimeLabel, recordDiskSave, setUiBusy, buildDsMessage, getPromptById,
-        renderReviewPanel, findFormulaIssues, buildTaskUrl, parseLatexToFragments,
-    });
+});
+
+// Отладочный доступ к состоянию и ключевым функциям из консоли браузера.
+Object.defineProperty(window, 'editorState', {
+    get: () => ({
+        state,
+        api: {
+            publishToGist, saveToFile, loadFromDiskFile, askDeepSeek, setDsMode, currentDsMode,
+            generateXml, parseXmlToData, loadPromptsFromGists, buildDsPrompt,
+            openTask, copyTaskUrl, reloadActivePromptFromGist, savePromptEdit,
+            addLocalPrompt, removePrompt, newQuiz,
+        },
+        fn: {
+            updateLastSaveTimeLabel, recordDiskSave, setUiBusy, buildDsMessage, getPromptById,
+            renderReviewPanel, findFormulaIssues, buildTaskUrl, parseLatexToFragments,
+        },
+    }),
 });
 
 function cacheElements() {
@@ -199,13 +201,13 @@ function bindEvents() {
     document.addEventListener('focusin', (e) => {
         if (e.target.closest && e.target.closest('.editor-scroll-container') &&
             (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')) {
-            lastFocused = e.target;
+            state.lastFocusedInput = e.target;
         }
     });
 
     // XML-панель (ручное редактирование): парсим «тихо», помечаем изменения
     els.xmlEditor.addEventListener('input', () => {
-        if (applyingXmlToEditor) return;
+        if (state.applyingXmlToEditor) return;
         silentParseXml(els.xmlEditor.value);
         updatePublishReadiness();
         if (!els.reviewPanel.classList.contains('hidden')) renderReviewPanel();
@@ -274,6 +276,13 @@ document.addEventListener('click', (e) => {
         updateXmlOutput();
     }
 });
+
+// Флаг state.applyingXmlToEditor: пока идёт применение XML к редактору,
+// слушатель input на XML-панели не перепарсит её содержимое повторно.
+function withApplyingXml(fn) {
+    state.applyingXmlToEditor = true;
+    try { return fn(); } finally { state.applyingXmlToEditor = false; }
+}
 
 function on(id, ev, fn) { document.getElementById(id).addEventListener(ev, fn); }
 
@@ -578,12 +587,7 @@ function buildDsPrompt(basePrompt) {
 // ============================================================
 // «Тихий» парсинг XML в состояние (без toast и без перерисовки редактора)
 function silentParseXml(xmlString) {
-    applyingXmlToEditor = true;
-    try {
-        return parseXmlToDataQuiet(xmlString);
-    } finally {
-        applyingXmlToEditor = false;
-    }
+    return withApplyingXml(() => parseXmlToDataQuiet(xmlString));
 }
 
 function parseXmlToData(xmlString) {
@@ -659,73 +663,10 @@ function newFormulaItem() {
 }
 
 // ============================================================
-// Разбор LaTeX на фрагменты (точная копия алгоритма из Formula Builder)
+// Разбор LaTeX на фрагменты вынесен в общий модуль js/latex-fragments.js
+// (тот же файл используется приложением Formula Builder — алгоритмы не
+// расходятся). Функция parseLatexToFragments доступна как глобальная.
 // ============================================================
-function parseLatexToFragments(latex) {
-    const tokens = []; let current = ''; let braceDepth = 0; let i = 0;
-    while (i < latex.length) {
-        const char = latex[i];
-        if (char === '\\') {
-            if (current.trim()) { tokens.push(current.trim()); current = ''; }
-            let cmd = '\\'; i++;
-            while (i < latex.length && /[a-zA-Z]/.test(latex[i])) { cmd += latex[i]; i++; }
-            if (cmd === '\\left' || cmd === '\\right') { if (i < latex.length) { cmd += latex[i]; i++; } }
-            tokens.push(cmd); continue;
-        }
-        if (char === '{') { braceDepth++; current += char; i++; continue; }
-        if (char === '}') {
-            braceDepth--; current += char; i++;
-            if (braceDepth === 0 && current.trim()) { tokens.push(current.trim()); current = ''; }
-            continue;
-        }
-        if (braceDepth > 0) { current += char; i++; continue; }
-        if (['+', '-', '=', '^', '_', '(', ')', '[', ']', '!', ',', ';', ':'].includes(char)) {
-            if (current.trim()) { tokens.push(current.trim()); current = ''; }
-            tokens.push(char); i++; continue;
-        }
-        if (/\s/.test(char)) { if (current.trim()) { tokens.push(current.trim()); current = ''; } i++; continue; }
-        current += char; i++;
-    }
-    if (current.trim()) { tokens.push(current.trim()); }
-    const fragments = [];
-    for (let j = 0; j < tokens.length; j++) {
-        const token = tokens[j];
-        if (token === '\\frac') {
-            let fracStr = token; let depth = 0; let k = j + 1; let partCount = 0;
-            while (k < tokens.length && partCount < 2) {
-                if (tokens[k] === '{') { if (depth === 0) fracStr += '{'; else fracStr += tokens[k]; depth++; }
-                else if (tokens[k] === '}') { depth--; if (depth === 0) { fracStr += '}'; partCount++; } else { fracStr += tokens[k]; } }
-                else { fracStr += tokens[k]; }
-                k++;
-            }
-            fragments.push(fracStr); j = k - 1; continue;
-        }
-        if (token === '\\sqrt') {
-            let sqrtStr = token; let k = j + 1;
-            if (k < tokens.length && tokens[k] === '{') { let depth = 0; while (k < tokens.length) { if (tokens[k] === '{') depth++; else if (tokens[k] === '}') depth--; sqrtStr += tokens[k]; k++; if (depth === 0) break; } }
-            fragments.push(sqrtStr); j = k - 1; continue;
-        }
-        if (token === '^') {
-            let last = fragments.pop() || ''; let powerStr = token; let k = j + 1;
-            if (k < tokens.length && tokens[k] === '{') { let depth = 0; while (k < tokens.length) { if (tokens[k] === '{') depth++; else if (tokens[k] === '}') depth--; powerStr += tokens[k]; k++; if (depth === 0) break; } }
-            else if (k < tokens.length) { powerStr += tokens[k]; k++; }
-            fragments.push(last + powerStr); j = k - 1; continue;
-        }
-        if (token === '_') {
-            let last = fragments.pop() || ''; let subStr = token; let k = j + 1;
-            if (k < tokens.length && tokens[k] === '{') { let depth = 0; while (k < tokens.length) { if (tokens[k] === '{') depth++; else if (tokens[k] === '}') depth--; subStr += tokens[k]; k++; if (depth === 0) break; } }
-            else if (k < tokens.length) { subStr += tokens[k]; k++; }
-            fragments.push(last + subStr); j = k - 1; continue;
-        }
-        if (token.startsWith('\\left')) {
-            let bracketStr = token; let depth = 1; let k = j + 1;
-            while (k < tokens.length && depth > 0) { if (tokens[k].startsWith('\\left')) depth++; else if (tokens[k].startsWith('\\right')) depth--; bracketStr += tokens[k]; k++; }
-            fragments.push(bracketStr); j = k - 1; continue;
-        }
-        fragments.push(token);
-    }
-    return fragments.filter(f => f.trim());
-}
 
 // ============================================================
 // Рендеринг редактора формул
@@ -919,7 +860,7 @@ function addSymbol() {
 
 // ===== ВСТАВКА LaTeX-КОНСТРУКЦИЙ =====
 function ins(before, after) {
-    const el = lastFocused;
+    const el = state.lastFocusedInput;
     if (!el || !el.isConnected) return showToast('Сначала щёлкните в поле LaTeX, названия или обозначения', true);
     const s = el.selectionStart ?? el.value.length;
     const e2 = el.selectionEnd ?? s;
@@ -1206,13 +1147,7 @@ async function saveToFile() {
 
 // «Применить ▶»: XML -> редактор. После применения предлагаем сохранить задание в файл.
 function applyXmlChanges() {
-    applyingXmlToEditor = true;
-    let applied = false;
-    try {
-        applied = parseXmlToData(els.xmlEditor.value);
-    } finally {
-        applyingXmlToEditor = false;
-    }
+    const applied = withApplyingXml(() => parseXmlToData(els.xmlEditor.value));
     if (!applied) return;
     state.currentFormulaIndex = 0;
     renderFormula();
@@ -1577,6 +1512,19 @@ async function loadFromGist() {
 // ============================================================
 // DeepSeek: отправка XML + промпта, обработка ответа
 // ============================================================
+
+// Применить XML — ответ DeepSeek — к редактору; вернуть true, если XML корректен.
+function applyDeepSeekXml(xml) {
+    return withApplyingXml(() => {
+        const parsedOk = parseXmlToData(xml);
+        if (parsedOk) {
+            state.currentFormulaIndex = 0;
+            renderFormula();
+        }
+        return parsedOk;
+    });
+}
+
 function extractXmlFromText(text) {
     if (!text) return '';
     // убираем markdown-обёртки ```xml ... ```
@@ -1759,17 +1707,7 @@ async function askDeepSeek(mode) {
         hideDsResultWindow();
         els.xmlEditor.value = resultXml;
         // Результат сразу применяем к редактору; автосохранение запишет его на диск / в Gist
-        applyingXmlToEditor = true;
-        let parsedOk = false;
-        try {
-            parsedOk = parseXmlToData(resultXml);
-            if (parsedOk) {
-                state.currentFormulaIndex = 0;
-                renderFormula();
-            }
-        } finally {
-            applyingXmlToEditor = false;
-        }
+        const parsedOk = applyDeepSeekXml(resultXml);
         markTaskChanged();
         if (parsedOk) {
             showToast('Ответ DeepSeek применён к XML и редактору');
@@ -1876,12 +1814,7 @@ async function sendDsResultToDeepSeek(userText, mode) {
         if (resultXml && resultXml.includes('<formulas')) {
             hideDsResultWindow();
             els.xmlEditor.value = resultXml;
-            applyingXmlToEditor = true;
-            let parsedOk = false;
-            try {
-                parsedOk = parseXmlToData(resultXml);
-                if (parsedOk) { state.currentFormulaIndex = 0; renderFormula(); }
-            } finally { applyingXmlToEditor = false; }
+            const parsedOk = applyDeepSeekXml(resultXml);
             markTaskChanged();
             showToast(parsedOk ? 'Ответ DeepSeek применён к XML и редактору' : 'Ответ получен, но XML некорректен — проверьте панель XML', !parsedOk);
             setStatus('DeepSeek: ответ применён');
