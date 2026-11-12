@@ -93,3 +93,31 @@
 .summary-row:last-child { border-bottom: none; }
 .summary-label { color: var(--muted); min-width: 170px; flex-shrink: 0; }
 .summary-value { font-weight: 600; word-break: break-word; }
+
+/* ===== Student Tracker (сохранение результата) и разбор ответов ===== */
+.tracker-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+}
+.tracker-card.tracker-ok { border-color: #10b981; }
+.tracker-card.tracker-error { border-color: #ef4444; }
+.tracker-title { font-weight: 800; margin-bottom: 4px; }
+.tracker-hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+.tracker-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.tracker-id-input {
+    flex: 1; min-width: 200px;
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 0.95rem;
+}
+.tracker-id-input:focus { outline: none; border-color: var(--accent); }
+.tracker-status { margin-top: 10px; font-size: 13.5px; font-weight: 600; min-height: 18px; }
+.tracker-status.ok { color: #10b981; }
+.tracker-status.err { color: #ef4444; }
+.tracker-status.info { color: var(--muted); }
+.detail-note { font-size: 13px; color: var(--muted); margin: 0 0 12px; }

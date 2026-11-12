@@ -110,17 +110,17 @@
         <div class="min-h-screen flex items-center justify-center p-4">
             <div class="card max-w-2xl w-full text-center fade-in">
                 <h2 class="title-display text-3xl md:text-4xl font-bold mb-2">Результат</h2>
-                <p id="resultStudentName" class="text-lg mb-6" style="color: var(--muted)"></p>
-                <!-- Сводка сдачи: ФИО, группа, тема теста, дата/время сдачи, затраченное время -->
-                <div id="submissionSummary" class="summary-card text-left mb-6"></div>
-                <div class="mb-6"><p class="text-sm uppercase tracking-wider" style="color: var(--muted)">Время прохождения</p><p id="resultTime" class="result-time">00:00</p></div>
-                <div class="flex justify-center mb-8"><div class="score-circle" id="scoreCircle" style="--score: 0"><span class="score-value" id="scoreValue">0%</span></div></div>
-                <div class="grid grid-cols-4 gap-4 mb-8">
-                    <div class="stat-card"><p class="stat-value" id="totalFormulas">0</p><p class="text-sm" style="color: var(--muted)">Всего формул</p></div>
-                    <div class="stat-card"><p class="stat-value" id="correctAnswers">0</p><p class="text-sm" style="color: var(--muted)">Правильных</p></div>
-                    <div class="stat-card"><p class="stat-value" id="wrongAnswers">0</p><p class="text-sm" style="color: var(--muted)">Ошибок</p></div>
-                    <div class="stat-card"><p class="stat-value" id="studentResult">0</p><p class="text-sm" style="color: var(--muted)">Оценка</p></div>
-                
+                <!-- Единая итоговая сводка (как в rt_v2 / mt_v2): ФИО+группа, оценка, тема, начало/окончание, время -->
+                <div id="resultSummary" class="summary-card text-left mb-6"></div>
+                <!-- Сохранение результата в Student Tracker: студент вводит только ИД -->
+                <div id="trackerCard" class="tracker-card text-left mb-6">
+                    <div class="tracker-title">💾 Сохранение результата</div>
+                    <div class="tracker-hint">Введите ваш ИД (студенческий билет) — остальная информация (ФИО, группа, название теста, вопросы, правильные ответы, время) возьмётся из результатов автоматически. После сохранения все оценки откроются в новой вкладке.</div>
+                    <div class="tracker-form">
+                        <input type="text" id="trackerStudentIdInput" class="tracker-id-input" placeholder="ИД студента (студенческий билет)" autocomplete="off" inputmode="numeric">
+                        <button id="trackerSaveBtn" class="btn btn-primary">💾 Сохранить результат</button>
+                    </div>
+                    <div id="trackerStatus" class="tracker-status hidden"></div>
                 </div>
                 <div id="submissionStatus" class="submission-status success" style="display: none;"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Результаты отправлены</div>
                 <div id="resultsDetails" class="text-left mb-8 max-h-64 overflow-y-auto"></div>
