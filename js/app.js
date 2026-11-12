@@ -64,15 +64,7 @@ const elements = {
     checkBtn: $('checkBtn'),
     checkBtnNext: $('checkBtnNext'),
     finishBtn: $('finishBtn'),
-    resultStudentName: $('resultStudentName'),
-    resultTime: $('resultTime'),
-    scoreCircle: $('scoreCircle'),
-    scoreValue: $('scoreValue'),
-    submissionSummary: $('submissionSummary'),
-    totalFormulas: $('totalFormulas'),
-    correctAnswers: $('correctAnswers'),
-    wrongAnswers: $('wrongAnswers'),
-    studentResult: $('studentResult'),
+    resultSummary: $('resultSummary'),
     resultsDetails: $('resultsDetails'),
     restartBtn: $('restartBtn'),
     qrModal: $('qrModal'),
@@ -83,6 +75,10 @@ const elements = {
     timerDisplay: $('timerDisplay'),
     symbolsContainer: $('symbolsContainer'),
     submissionStatus: $('submissionStatus'),
+    trackerCard: $('trackerCard'),
+    trackerStudentIdInput: $('trackerStudentIdInput'),
+    trackerSaveBtn: $('trackerSaveBtn'),
+    trackerStatus: $('trackerStatus'),
 };
 
 // ============ UTILITIES ============
@@ -96,6 +92,24 @@ function formatTime(ms) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Чч:Мм:Сс (как в rt_v2 / mt_v2) для итоговой сводки.
+function formatClock(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    const pad = n => n.toString().padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+// Date -> «дд.мм.гггг, чч:мм:сс» (ru-RU), как в mt_v2.
+function formatDateTime(date) {
+    return date.toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
 }
 
 function shuffleArray(array) {
@@ -480,66 +494,87 @@ function computeScore(percentage) {
 
 function buildResultsDetailsHtml(resultsList) {
     const iconOk = '<svg class="inline" width="20" height="20" fill="none" stroke="#10b981" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>';
-    const iconFail = '<svg class="inline" width="20" height="20" fill="none" stroke="#ef4444" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
 
-    return '<div class="space-y-3">' + resultsList.map((r, i) => `
-        <div class="result-formula ${r.correct ? 'correct' : 'incorrect'}">
-            <div class="flex items-center gap-2 mb-2">${r.correct ? iconOk : iconFail}<span class="font-medium">${escapeHtml(r.name)}</span></div>
-            <p class="text-sm mb-1" style="color: var(--muted)">Правильный ответ:</p>
-            <div class="p-2 rounded" style="background: rgba(0,0,0,0.2)"></div>
+    const correct = (resultsList || []).filter(r => r.correct);
+    const header = '<h3 class="summary-title">Разбор ответов</h3>'
+        + '<p class="detail-note">Показаны только вопросы, на которые был дан правильный ответ</p>';
+
+    if (correct.length === 0) {
+        return header + '<p class="detail-note">Нет вопросов, отвеченных правильно</p>';
+    }
+
+    return header + '<div class="space-y-3">' + correct.map((r, i) => `
+        <div class="result-formula correct">
+            <div class="flex items-center gap-2 mb-2">${iconOk}<span class="font-medium">${escapeHtml(r.name)}</span></div>
             <div id="correctFormula${i}" class="p-2"></div>
         </div>`).join('') + '</div>';
 }
 
-// Сводка сдачи на последнем экране: ФИО, группа, тема теста,
-// дата и время сдачи, затраченное время.
-function buildSubmissionSummaryHtml() {
-    const submissionDate = new Date();
+// Единая итоговая сводка (как в rt_v2 / mt_v2).
+function renderResultSummary(data) {
+    const box = elements.resultSummary;
+    if (!box) return;
+    const gradeNames = { 5: 'отлично', 4: 'хорошо', 3: 'удовлетворительно', 2: 'неудовлетворительно' };
     const rows = [
-        ['ФИО', studentData.lastName.trim()],
-        ['Группа', studentData.group],
-        ['Тема теста', quizTitle || '(не указана в файле)'],
-        ['Дата и время сдачи', submissionDate.toLocaleString('ru-RU')],
-        ['Затраченное время', formatTime(totalTestTime)],
+        ['ФИО', (data.fio || '—') + ' Группа: ' + (data.group || '')],
+        ['Оценка', `${data.grade} (${gradeNames[data.grade] || '—'}), ${data.percent}% правильных ответов`],
+        ['Тема', data.topic || '(не указана в файле)'],
+        ['Начало теста', (data.startDateTimeStr || '—') + ' Окончание теста: ' + (data.endTimeStr || '')],
+        ['Затраченное время', data.timeSpentStr || '—'],
     ];
-    return '<h3 class="summary-title">Сводка</h3>' + rows.map(([label, value]) =>
+    box.innerHTML = rows.map(([label, value]) =>
         `<div class="summary-row"><span class="summary-label">${escapeHtml(label)}:</span>`
-        + `<span class="summary-value">${escapeHtml(value || '—')}</span></div>`).join('');
+        + `<span class="summary-value">${escapeHtml(value)}</span></div>`).join('');
 }
 
 function showResults() {
-    elements.resultStudentName.textContent = `${studentData.lastName} ${studentData.group}`.trim();
     // Сначала фиксируем время сдачи, затем строим сводку (в ней используется totalTestTime).
     stopTimer();
-    if (elements.submissionSummary) {
-        elements.submissionSummary.innerHTML = buildSubmissionSummaryHtml();
-    }
+
     const total = formulas.length;
     const percentage = total > 0
         ? Math.max(0, Math.round((correctCount / total - WRONG_ANSWER_PENALTY * wrongCount) * 100))
         : 0;
     const mark = computeScore(percentage);
 
-    elements.resultTime.textContent = formatTime(totalTestTime);
-    elements.totalFormulas.textContent = total;
-    elements.correctAnswers.textContent = correctCount;
-    elements.wrongAnswers.textContent = wrongCount;
-    elements.studentResult.textContent = mark;
-    elements.scoreValue.textContent = `${percentage}%`;
-    elements.scoreCircle.style.setProperty('--score', percentage);
+    const startDateTimeStr = testStartTime > 0 ? formatDateTime(new Date(testStartTime)) : '';
+    const endTimeStr = new Date().toLocaleTimeString('ru-RU');
+
+    renderResultSummary({
+        fio: studentData.lastName.trim(),
+        group: studentData.group.trim(),
+        grade: mark,
+        percent: percentage,
+        topic: quizTitle,
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        timeSpentStr: formatClock(totalTestTime)
+    });
+
+    lastResult = {
+        testTitle: quizTitle || '(не указана в файле)',
+        studentName: studentData.lastName.trim(),
+        studentGroup: studentData.group.trim(),
+        totalQuestions: total,
+        correctAnswers: correctCount,
+        wrongAnswers: wrongCount,
+        percent: percentage,
+        grade: mark,
+        timeSpentStr: formatClock(totalTestTime),
+        startDateTimeStr: startDateTimeStr,
+        endTimeStr: endTimeStr,
+        saved: false
+    };
+    initTrackerCard();
 
     if (resultFormUrl) sendResultsToForm(percentage);
 
-    // Detailed breakdown is shown only when the student passed reasonably well.
-    if (percentage > 60) {
-        elements.resultsDetails.innerHTML = buildResultsDetailsHtml(results);
-        results.forEach((r, i) => {
-            const el = document.getElementById(`correctFormula${i}`);
-            if (el) renderLatexDisplay(r.latex, el);
-        });
-    } else {
-        elements.resultsDetails.innerHTML = '';
-    }
+    // Разбор ответов: показаны только правильные ответы (как в rt_v2 / mt_v2).
+    elements.resultsDetails.innerHTML = buildResultsDetailsHtml(results);
+    results.filter(r => r.correct).forEach((r, i) => {
+        const el = document.getElementById(`correctFormula${i}`);
+        if (el) renderLatexDisplay(r.latex, el);
+    });
 
     showScreen('result');
 }
@@ -561,6 +596,151 @@ function sendResultsToForm(percentage) {
             .catch(err => console.error('Error sending results:', err));
     } catch (e) {
         console.error('Error constructing result URL:', e);
+    }
+}
+
+// ============ Student Tracker: сохранение результата по ИД студента ============
+// Интеграция напрямую (как в mt_v2): запросы к Supabase выполняются встроенным
+// клиентом, поэтому внешний api.js не нужен.
+const SUPABASE_URL = 'https://nfoynqfjkvgtqsgwxves.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5mb3lucWZqa3ZndHFzZ3d4dmVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNzc3NDUsImV4cCI6MjEwODk1Mzc0NX0.SR2krMy390zOPeVwUjdBAhufwcj57Kk8VQXqFBu3Fdo';
+const TRACKER_STUDENT_PAGE = 'https://tregubovvn.github.io/save_all_result/public/student.html';
+const STORAGE_KEY_TRACKER_ID = 'ftStudentTrackerId';
+
+let lastResult = null;
+
+function supabaseHeaders(extra) {
+    return Object.assign({
+        'apikey': SUPABASE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'Content-Type': 'application/json'
+    }, extra || {});
+}
+
+async function trackerFetchRecords(studentId, limit) {
+    let url = `${SUPABASE_URL}/rest/v1/records?student_id=eq.${encodeURIComponent(studentId)}&order=date_time.desc`;
+    if (limit) url += `&limit=${limit}`;
+    url += `&apikey=${encodeURIComponent(SUPABASE_KEY)}`;
+    const resp = await fetch(url, { headers: supabaseHeaders() });
+    if (!resp.ok) throw new Error('Ошибка загрузки записей (' + resp.status + ')');
+    const json = await resp.json();
+    return Array.isArray(json) ? json : [];
+}
+
+async function trackerSave(data) {
+    if (!data || !data.studentId) throw new Error('Не указан studentId');
+    if (!data.activity) throw new Error('Не указано название активности');
+    if (data.grade === undefined || data.grade === null || data.grade === '') throw new Error('Не указана оценка');
+
+    const last = await trackerFetchRecords(data.studentId, 1);
+    if (last.length) {
+        const diffMin = (Date.now() - new Date(last[0].date_time).getTime()) / 60000;
+        if (diffMin < 10) {
+            throw new Error(`Можно сохранять не чаще раза в 10 минут. Подождите ещё ${Math.ceil(10 - diffMin)} мин.`);
+        }
+    }
+
+    const record = {
+        student_id: String(data.studentId),
+        activity: data.activity,
+        grade: String(data.grade),
+        comment: data.comment || '',
+        date_time: new Date().toISOString()
+    };
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/records?apikey=${encodeURIComponent(SUPABASE_KEY)}`, {
+        method: 'POST',
+        headers: supabaseHeaders({ 'Prefer': 'return=minimal' }),
+        body: JSON.stringify(record)
+    });
+    if (!(resp.ok || resp.status === 201)) {
+        const t = await resp.text().catch(() => '');
+        throw new Error('Ошибка сервера: ' + t.slice(0, 120));
+    }
+    return { success: true, message: 'Запись сохранена', record };
+}
+
+function buildTrackerComment(res) {
+    const parts = [
+        `ФИО: ${res.studentName || '—'}`,
+        `Группа: ${res.studentGroup || '—'}`,
+        `Тема: ${res.testTitle || '—'}`,
+        `Начало теста: ${res.startDateTimeStr || '—'}`,
+        `Окончание теста: ${res.endTimeStr || '—'}`,
+        `Затраченное время: ${res.timeSpentStr}`,
+        `Формул: ${res.totalQuestions}`,
+        `Правильных ответов: ${res.correctAnswers}`,
+    ];
+    return `${parts.join('; ')} Результат: ${res.percent}% (оценка ${res.grade}).`;
+}
+
+function setTrackerStatus(message, type) {
+    elements.trackerStatus.textContent = message;
+    elements.trackerStatus.className = 'tracker-status' + (type ? ' ' + type : '');
+    elements.trackerCard.classList.toggle('tracker-ok', type === 'ok');
+    elements.trackerCard.classList.toggle('tracker-error', type === 'err');
+    if (!message) elements.trackerStatus.classList.add('hidden');
+}
+
+function trackerStudentPageUrl(studentId) {
+    return `${TRACKER_STUDENT_PAGE}?id=${encodeURIComponent(studentId)}`;
+}
+
+function initTrackerCard() {
+    elements.trackerCard.classList.remove('tracker-ok', 'tracker-error');
+    elements.trackerSaveBtn.disabled = false;
+    elements.trackerSaveBtn.textContent = '💾 Сохранить результат';
+    let savedId = '';
+    try { savedId = localStorage.getItem(STORAGE_KEY_TRACKER_ID) || ''; } catch (e) {}
+    if (savedId) elements.trackerStudentIdInput.value = savedId;
+    setTrackerStatus('', null);
+}
+
+async function saveResultToTracker() {
+    if (!lastResult) {
+        setTrackerStatus('Нет данных завершённого теста для сохранения.', 'err');
+        return;
+    }
+    const studentId = elements.trackerStudentIdInput.value.trim();
+    if (!studentId) {
+        setTrackerStatus('Введите ваш ИД (студенческий билет).', 'err');
+        elements.trackerStudentIdInput.focus();
+        return;
+    }
+
+    setTrackerStatus('Сохраняем результат...', 'info');
+    elements.trackerSaveBtn.disabled = true;
+    elements.trackerSaveBtn.textContent = '⏳ Сохранение...';
+
+    // Вкладку с оценками открываем заранее (браузеры разрешают window.open только
+    // из прямого действия), а URL подменяем после успешного сохранения.
+    const gradesWindow = window.open('about:blank', '_blank');
+
+    try {
+        const result = await trackerSave({
+            studentId: studentId,
+            activity: 'Formula Test — ' + (lastResult.testTitle || 'тест'),
+            grade: String(lastResult.grade),
+            comment: buildTrackerComment(lastResult)
+        });
+        if (result && result.success) {
+            lastResult.saved = true;
+            try { localStorage.setItem(STORAGE_KEY_TRACKER_ID, studentId); } catch (e) {}
+            const gradesUrl = trackerStudentPageUrl(studentId);
+            if (gradesWindow) {
+                gradesWindow.location.href = gradesUrl;
+                setTrackerStatus('✅ Результат сохранён. Все оценки студента открыты в новой вкладке.', 'ok');
+                elements.trackerSaveBtn.textContent = '✓ Сохранено';
+            } else {
+                window.location.href = gradesUrl;
+            }
+        } else {
+            throw new Error(result && result.message ? result.message : 'Сервер отклонил запись');
+        }
+    } catch (error) {
+        if (gradesWindow) gradesWindow.close();
+        setTrackerStatus('✗ ' + error.message, 'err');
+        elements.trackerSaveBtn.disabled = false;
+        elements.trackerSaveBtn.textContent = '💾 Сохранить результат';
     }
 }
 
@@ -677,6 +857,12 @@ function bindResultScreenEvents() {
         elements.symbolsContainer.style.display = 'none';
         elements.submissionStatus.style.display = 'none';
         updateStartButton();
+    });
+
+    // Student Tracker: сохранение результата по ИД студента (Enter тоже отправляет)
+    elements.trackerSaveBtn.addEventListener('click', saveResultToTracker);
+    elements.trackerStudentIdInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') saveResultToTracker();
     });
 }
 
